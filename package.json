@@ -176,8 +176,7 @@
       "eslint",
       "jest",
       "lefthook",
-      "release-it",
-      "vite"
+      "release-it"
     ],
     "version": "0.64.0"
   }
