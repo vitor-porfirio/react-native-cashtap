@@ -52,6 +52,51 @@ Modelo de entrada:
 
 ---
 
+## D003 — Remoção do suporte web do template  (2026-10-29 · T03)
+
+**Contexto:** o `create-react-native-library` gerou o projeto com suporte a web: implementação alternativa em JS puro (`multiply.tsx` ao lado de `multiply.native.tsx`), build do example com Vite (`vite.config.mjs`, `index.html`, `react-native-web`, `react-dom`) e um job `build-web` no CI. NFC não existe no navegador e o escopo já é só Android (D002).
+
+**Decisão:** remover todo o suporte web: arquivos do Vite, dependências web do example, scripts `web`/`build:web`, bloco `document` do `example/index.js` e o job `build-web` do CI. A API pública tem só a implementação nativa.
+
+**Alternativas:**
+- *Manter um stub web que devolve `UNSUPPORTED`* — descartada: mantém um alvo de build e um conjunto de dependências que ninguém vai usar nem testar, só para responder "não suportado".
+
+**Consequências:** menos dependências e menos superfície de build no example e no CI. Importar o pacote num app web passa a falhar na carga do módulo nativo, o que é o comportamento esperado para uma plataforma fora do escopo.
+
+---
+
+## D004 — Example compilado só para ABIs ARM; sem emulador  (2026-10-29 · T03)
+
+**Contexto:** `reactNativeArchitectures` define para quais processadores o C++ do React Native é compilado no app de exemplo. As ABIs `x86`/`x86_64` só servem ao emulador, e o emulador do Android não emula o rádio NFC, então não executa o fluxo do SDK.
+
+**Decisão:** o example compila apenas `armeabi-v7a,arm64-v8a` (`example/android/gradle.properties`). Desenvolvimento e ensaios são feitos em dispositivo físico.
+
+**Alternativas:**
+- *Manter as quatro ABIs e usar `--active-arch-only` no dia a dia* — descartada pela simplicidade: o build completo do example não precisa gerar binários de emulador.
+
+**Consequências:**
+- A configuração vale **só para o app de exemplo**. Ela não é publicada no pacote (o `example/` fica fora do `files` do `package.json`) e não afeta o integrador.
+- A lib é Kotlin puro: compila para bytecode, independente de processador, e não entrega binário nativo (`.so`). Por isso não impõe restrição de ABI a quem a instala, e o app do integrador continua rodando em emulador.
+- Requisito derivado para o SDK: em aparelho sem NFC (emulador incluído), responder `UNSUPPORTED` e nunca crashar, para não impedir o integrador de usar o emulador no resto do app (T07).
+- Quando for necessário testar o caminho `UNSUPPORTED` no emulador: `yarn example android -PreactNativeArchitectures=x86_64` (ou reverter a linha).
+- Se o SDK um dia passar a entregar código C++/`.so`, deve incluir todas as ABIs, inclusive as de emulador.
+
+---
+
+## D005 — JDK 17 para o build Android  (2026-10-29 · T03)
+
+**Contexto:** o Android Studio gerou `example/android/gradle/gradle-daemon-jvm.properties` fixando o JDK do daemon do Gradle em 25, com download automático. O terminal usa o JDK 17 (`JAVA_HOME` via SDKMAN). O plugin Gradle do React Native 0.88 compila Kotlin e Java com toolchain 17 (`jvmToolchain(17)`, `JavaVersion.VERSION_17` em `JdkConfiguratorUtils.kt`).
+
+**Decisão:** JDK 17 em todos os ambientes (terminal, Android Studio e CI), via `JAVA_HOME`. O arquivo de critérios do daemon foi removido e o Gradle JDK do Android Studio aponta para o `JAVA_HOME`.
+
+**Alternativas:**
+- *JDK 25 (LTS mais recente)* — descartada: o JDK só roda o build, o app executa no ART do aparelho, então não há ganho para o produto. O toolchain do RN continua exigindo 17, e versões acima do testado pelo RN são fonte conhecida de erros de build.
+- *Versionar o `gradle-daemon-jvm.properties` com 17* — adiada: torna o build reproduzível sem depender do `JAVA_HOME`, mas acrescenta download automático de JDK e foge do template do RN. Reavaliar se o CI ou outra máquina divergir.
+
+**Consequências:** build igual no terminal e na IDE; atualização do JDK acompanha a versão indicada pelo React Native, não o lançamento mais recente do Java.
+
+---
+
 # Divergências spec EMV × cartão real
 
 | Data | Cartão | Esperado pela spec | Observado | Hex |
