@@ -123,6 +123,51 @@ Modelo de entrada:
 
 ---
 
+## D008 — Remoção do iOS e guarda de plataforma no TS  (2026-11-21 · F1 · #3)
+
+**Contexto:** o template gerou `ios/`, `Cashtap.podspec`, `example/ios`, `Gemfile` e um job de build iOS no CI. Com a spec do Turbo Module mudando, o `Cashtap.mm` ficaria desatualizado e quebraria o build iOS. A especificação (E1-H1) admite remover a pasta ou deixar um stub.
+
+**Decisão:** remover todo o código e configuração iOS do pacote e do example. O TS acessa o módulo nativo só por `src/native.ts`, que devolve `null` fora do Android (`Platform.OS` + `TurboModuleRegistry.get`, não `getEnforcing`). A API pública responde `UNSUPPORTED` em vez de lançar no import.
+
+**Alternativas:**
+- *Stub iOS que rejeita "não suportado"* — descartada: manteria Podspec, Xcode project e job de CI só para dizer "não", e o stub teria que acompanhar cada mudança da spec.
+
+**Consequências:** um app iOS que instale o pacote recebe `UNSUPPORTED` em tempo de execução, sem crash. O integrador multiplataforma pode chamar a API sem `if (Platform.OS)`. *Não verificado:* que o build de um app iOS hospedeiro não seja afetado pelo `codegenConfig` da lib — fica como validação futura, junto do teste com `npm pack` previsto na D001.
+
+---
+
+## D009 — Evento `onNfcStatusChange` e eventos tipados do Codegen  (2026-11-21 · F1 · #5)
+
+**Contexto:** a F1 exige um evento nativo → JS. A especificação §2.4 sugere o padrão antigo `addListener`/`removeListeners` + `NativeEventEmitter`. A RN 0.76+ oferece `CodegenTypes.EventEmitter<T>` na spec, que gera `emitOnX` tipado na classe base Kotlin.
+
+**Decisão:** usar `CodegenTypes.EventEmitter`. O primeiro evento é `onNfcStatusChange`, alimentado pelo `NfcStateMonitor` (`BroadcastReceiver` de `NfcAdapter.ACTION_ADAPTER_STATE_CHANGED`), removido no `invalidate()`. Emite só em `STATE_ON`/`STATE_OFF` e só quando o status muda. Ele também atende RN-02: quando o operador liga o NFC nas configurações, a UI reverifica sozinha. Exposto na API pública como `onNfcStatusChange(listener): Unsubscribe`.
+
+**Registro do receiver no Android 13+:** `RECEIVER_EXPORTED`. O broadcast é enviado pelo serviço NFC (`com.android.nfc`, UID `nfc`), não pelo `system_server`; um receiver `RECEIVER_NOT_EXPORTED` só recebe de root, `SYSTEM_UID` ou do próprio app, então o evento não chegaria. Exportar é seguro porque `android.nfc.action.ADAPTER_STATE_CHANGED` é `protected-broadcast`: nenhum app de terceiro consegue enviá-lo. (Apontado na revisão do Tech Lead da F1; a primeira versão usava `RECEIVER_NOT_EXPORTED`.)
+
+**Alternativas:**
+- *`addListener`/`removeListeners` + `NativeEventEmitter`* — descartada: sem tipagem do payload, nomes de evento como strings soltas e dois métodos de spec só de infraestrutura.
+- *Evento de teste artificial* — descartado: código sem uso em produção.
+
+**Consequências:** eventos com payload tipado e validado na fronteira; `subscription.remove()` desfaz a assinatura (teste em `src/__tests__/native.test.ts`). A superfície pública ganha uma função, justificada pelo uso real.
+
+---
+
+## D010 — `openNfcSettings` público e erro explícito de instalação  (2026-11-21 · F1 · #3)
+
+**Contexto:** RN-02 pede que o SDK oriente o operador a ligar o NFC e ofereça reverificação. A revisão da F1 apontou ainda que, no Android, um módulo nativo não linkado (pacote instalado sem rebuild, autolinking quebrado) fazia a API responder `UNSUPPORTED` — o que viraria a mensagem "Este aparelho não possui NFC" para o operador.
+
+**Decisão:**
+- `openNfcSettings()` entra na API pública: abre `Settings.ACTION_NFC_SETTINGS` a partir da Activity atual (ou do contexto da aplicação com `NEW_TASK`), cai para `ACTION_WIRELESS_SETTINGS` e nunca lança se nenhuma tela existir. A UI do SDK usa a mesma função.
+- No Android, módulo nativo ausente lança `LINKING_ERROR` com instrução de recompilar. `UNSUPPORTED` fica reservado para "fora do Android" e "aparelho sem NFC".
+
+**Alternativas:**
+- *Manter `openNfcSettings` interno à UI* — descartada: o integrador que mostra um indicador de NFC na própria tela precisaria duplicar a lógica de intent.
+- *Responder `UNSUPPORTED` também para módulo ausente* — descartada: transforma erro de instalação em diagnóstico falso.
+
+**Consequências:** superfície pública final prevista: `capture`, `cancel`, `getNfcStatus`, `onNfcStatusChange`, `openNfcSettings`, `onStateChange`, `CashTapProvider` (+ tipos). Erro de instalação aparece cedo e com instrução de correção.
+
+---
+
 # Divergências spec EMV × cartão real
 
 | Data | Cartão | Esperado pela spec | Observado | Hex |

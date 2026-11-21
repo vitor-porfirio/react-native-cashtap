@@ -1,37 +1,32 @@
 # react-native-cashtap
 
-softPOS for android card read
+SDK React Native que transforma um Android em leitor de cartão por aproximação (NFC/EMV).
 
-## Installation
+> Em desenvolvimento. A documentação completa (instalação, captura, API, erros e limitações) é publicada ao final do projeto (T30).
 
+## Plataforma
 
-```sh
-npm install react-native-cashtap
+Somente Android com NFC. Fora do Android, `getNfcStatus()` resolve `'UNSUPPORTED'` (veja `DECISIONS.md`, D002 e D008).
+
+## Uso disponível
+
+```ts
+import {
+  getNfcStatus,
+  onNfcStatusChange,
+  openNfcSettings,
+} from 'react-native-cashtap';
+
+const status = await getNfcStatus(); // 'READY' | 'DISABLED' | 'UNSUPPORTED'
+const unsubscribe = onNfcStatusChange((next) => console.log(next));
+if (status === 'DISABLED') openNfcSettings();
 ```
 
+## Contribuindo
 
-## Usage
+- [Fluxo de desenvolvimento](CONTRIBUTING.md#development-workflow)
+- [Código de conduta](CODE_OF_CONDUCT.md)
 
-
-```js
-import { multiply } from 'react-native-cashtap';
-
-// ...
-
-const result = multiply(3, 7);
-```
-
-
-## Contributing
-
-- [Development workflow](CONTRIBUTING.md#development-workflow)
-- [Sending a pull request](CONTRIBUTING.md#sending-a-pull-request)
-- [Code of conduct](CODE_OF_CONDUCT.md)
-
-## License
+## Licença
 
 MIT
-
----
-
-Made with [create-react-native-library](https://github.com/callstack/react-native-builder-bob)

@@ -1,12 +1,12 @@
 {
   "name": "react-native-cashtap",
   "version": "0.1.0",
-  "description": "softPOS for android card read",
+  "description": "SDK React Native que transforma um Android em leitor de cartão por aproximação (NFC/EMV)",
   "main": "./lib/module/index.js",
   "types": "./lib/typescript/src/index.d.ts",
   "exports": {
     ".": {
-      "react-native-cashtap-source": "./src/index.tsx",
+      "react-native-cashtap-source": "./src/index.ts",
       "types": "./lib/typescript/src/index.d.ts",
       "default": "./lib/module/index.js"
     },
@@ -16,11 +16,6 @@
     "src",
     "lib",
     "android",
-    "ios",
-    "cpp",
-    "*.podspec",
-    "react-native.config.js",
-    "!ios/build",
     "!android/build",
     "!android/gradle",
     "!android/gradlew",
@@ -33,7 +28,7 @@
   ],
   "scripts": {
     "example": "yarn workspace react-native-cashtap-example",
-    "clean": "del-cli android/build example/android/build example/android/app/build example/ios/build lib",
+    "clean": "del-cli android/build example/android/build example/android/app/build lib",
     "prepare": "bob build",
     "typecheck": "tsc",
     "lint": "eslint \"**/*.{js,ts,tsx}\"",
@@ -42,8 +37,12 @@
   },
   "keywords": [
     "react-native",
-    "ios",
-    "android"
+    "android",
+    "nfc",
+    "emv",
+    "contactless",
+    "softpos",
+    "turbo-module"
   ],
   "repository": {
     "type": "git",
@@ -138,7 +137,21 @@
     "modulePathIgnorePatterns": [
       "<rootDir>/example/node_modules",
       "<rootDir>/lib/"
-    ]
+    ],
+    "collectCoverageFrom": [
+      "src/**/*.{ts,tsx}",
+      "!src/**/__tests__/**",
+      "!src/NativeCashtap.ts",
+      "!src/index.ts"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "lines": 90,
+        "branches": 85,
+        "functions": 90,
+        "statements": 90
+      }
+    }
   },
   "commitlint": {
     "extends": [

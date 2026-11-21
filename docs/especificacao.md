@@ -113,6 +113,8 @@ Equivalência com o Apêndice A do TCC:
 | `cancelar()` | `cancel()` |
 | `verificarDisponibilidade()` | `getNfcStatus(): Promise<NfcStatus>` |
 | `aoMudarEstado(cb)` | `onStateChange(cb): Unsubscribe` |
+| — (RN-02) | `onNfcStatusChange(cb): Unsubscribe`, `openNfcSettings()` (D009, D010) |
+| — (E6-H1) | `<CashTapProvider>` hospeda o modal do SDK |
 | `valorCentavos, moeda, referencia, timeoutMs, maxTentativas, aparencia` | `amountCents, currencyCode, reference, timeoutMs, maxRetries, appearance` |
 | status `sucesso/cancelado/erro` | `success / cancelled / timeout / error` |
 | `DadosCartao {pan, panMascarado, validade, bandeira, rotuloAplicacao, aid, sequencialCartao}` | `CardData {pan, panMasked, expiry, brand, applicationLabel, aid, panSequenceNumber}` |

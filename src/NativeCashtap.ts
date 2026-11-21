@@ -1,7 +1,18 @@
-import { TurboModuleRegistry, type TurboModule } from 'react-native';
+import {
+  TurboModuleRegistry,
+  type CodegenTypes,
+  type TurboModule,
+} from 'react-native';
 
+/**
+ * Contrato privado TS ↔ Kotlin, lido pelo Codegen.
+ * Não importar fora de `src/native.ts`.
+ */
 export interface Spec extends TurboModule {
-  multiply(a: number, b: number): number;
+  getNfcStatus(): Promise<string>;
+  openNfcSettings(): void;
+
+  readonly onNfcStatusChange: CodegenTypes.EventEmitter<string>;
 }
 
-export default TurboModuleRegistry.getEnforcing<Spec>('Cashtap');
+export default TurboModuleRegistry.get<Spec>('Cashtap');
