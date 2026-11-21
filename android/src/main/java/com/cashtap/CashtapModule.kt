@@ -39,9 +39,12 @@ class CashtapModule(reactContext: ReactApplicationContext) :
     } catch (_: ActivityNotFoundException) {
       try {
         launch(Settings.ACTION_WIRELESS_SETTINGS)
-      } catch (_: ActivityNotFoundException) {
-        AndroidLogger.warn("nenhuma tela de configurações de NFC disponível")
+      } catch (e: RuntimeException) {
+        AndroidLogger.warn("nenhuma tela de configurações de NFC disponível: ${e.javaClass.simpleName}")
       }
+    } catch (e: RuntimeException) {
+      // Alguns fabricantes protegem a tela com SecurityException; nunca derrubar o app por isso.
+      AndroidLogger.warn("não foi possível abrir as configurações de NFC: ${e.javaClass.simpleName}")
     }
   }
 

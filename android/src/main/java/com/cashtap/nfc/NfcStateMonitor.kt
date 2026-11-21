@@ -22,7 +22,7 @@ class NfcStateMonitor(
     override fun onReceive(context: Context, intent: Intent) {
       if (intent.action != NfcAdapter.ACTION_ADAPTER_STATE_CHANGED) return
       // TURNING_ON / TURNING_OFF são transitórios: só ON e OFF mudam o status.
-      val status = when (intent.getIntExtra(NfcAdapter.EXTRA_ADAPTER_STATE, NfcAdapter.STATE_OFF)) {
+      val status = when (intent.getIntExtra(NfcAdapter.EXTRA_ADAPTER_STATE, -1)) {
         NfcAdapter.STATE_ON -> NfcStatus.READY
         NfcAdapter.STATE_OFF -> NfcStatus.DISABLED
         else -> return

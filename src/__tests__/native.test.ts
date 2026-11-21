@@ -116,6 +116,7 @@ describe('fronteira nativa', () => {
       emitNfcStatus('BANANA');
 
       expect(listener).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('BANANA'));
       warn.mockRestore();
     });
   });

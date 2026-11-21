@@ -15,10 +15,15 @@ export default function App() {
     let active = true;
     let receivedEvent = false;
 
-    const unsubscribe = onNfcStatusChange((next) => {
-      receivedEvent = true;
-      setStatus(next);
-    });
+    let unsubscribe = () => {};
+    try {
+      unsubscribe = onNfcStatusChange((next) => {
+        receivedEvent = true;
+        setStatus(next);
+      });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
     getNfcStatus()
       .then((initial) => {
         // Um evento que chegou antes da consulta inicial é mais recente: prevalece.
