@@ -270,27 +270,66 @@ Modelo de entrada:
 
 ## D018 — Máquina de estados: núcleo puro, runner e extensões à tabela §4.2  (2026-11-21 · F5 · #18–#22)
 
-**Contexto:** a especificação define 10 estados, a tabela de transições e INV-1..5. Alguns casos reais não estão na tabela: cartão que volta enquanto a tela de falha está aberta, cartão que volta durante a leitura (D017), cancelamento durante a verificação do NFC, e como encerrar com o NFC desligado (RN-02).
+**Contexto:** a especificação define 10 estados, a tabela de transições e INV-1..5. Alguns casos reais não estão na tabela: cartão que volta enquanto a tela de falha está aberta, cartão que volta durante a leitura (D017), cancelamento durante a verificação do NFC, NFC desligado com a tela aberta e como encerrar com o NFC desligado (RN-02).
 
-**Decisão:**
-- `src/core/machine.ts` é uma função pura `transition(snapshot, event) → { snapshot, effects }`. O `CaptureSession` (runner) executa os efeitos (rádio, timer, leitura, agendamentos), descarta eventos agendados quando o estado muda e resolve a Promise exatamente uma vez (INV-3). O nativo é injetado por `NativePort` — o equivalente, no TS, do `Transceiver` do Kotlin (T18).
-- Extensões à tabela, todas testadas:
-  - `RECOVERABLE_FAILURE` + cartão detectado → `READING` (sem esperar a mensagem de falha sumir), se houver retentativa disponível.
-  - `READING` + cartão detectado → lembra "tag pendente"; se a leitura falhar de forma recuperável, lê de novo na hora (D017).
-  - `CHECKING` + cancelar → cancelamento efetivado quando o NFC responder.
-  - `ERROR(NFC_DISABLED)` não encerra sozinho: espera "verificar novamente" (`RECHECK`, também disparado quando o NFC é ligado) ou "fechar"/cancelar, que resolve com `NFC_DISABLED` (RN-02).
-  - `ERROR(NFC_UNSUPPORTED)` encerra imediatamente e a UI não abre (RN-01).
-- Falhas automaticamente recuperáveis: `CARD_REMOVED`, `PROTOCOL_ERROR`, `PARSE_ERROR` (catálogo §5). A contagem segue RN-08: com `maxRetries = N`, a falha N+1 encerra com `READ_FAILED_MAX_RETRIES`.
-- Resultado com quatro status: `success`, `cancelled`, `timeout` e `error` — expiração é desfecho distinto de erro técnico (RN-06).
-- Estados terminais ficam visíveis por um tempo antes de resolver (sucesso 1,5 s, falha 3 s, falha recuperável 1,5 s); cancelamento resolve na hora.
-- `capture()` sem `CashTapProvider` montado **rejeita** (erro de integração, não de operação); parâmetro inválido e captura concorrente **resolvem** com `INVALID_AMOUNT` / `ALREADY_RUNNING` sem acionar o rádio (RN-03, RN-04).
-- `diagnostics: true` grava transições, trocas mascaradas e tempos da última captura; `toMeasurementRow`/`measurementsToCsv` produzem as linhas do Apêndice B sem PAN.
+**Decisão — modelo:**
+- `src/core/machine.ts` é uma função pura `transition(snapshot, event) → { snapshot, effects }`. O snapshot é uma **união discriminada por estado**: `PROCESSING`/`SUCCESS` carregam o cartão, `RECOVERABLE_FAILURE`/`TIMEOUT`/`ERROR` carregam o erro, os demais não carregam nenhum dos dois — "SUCCESS sem cartão" ou "IDLE com cartão" não compilam (#19).
+- O `CaptureSession` (runner) executa os efeitos. O nativo é injetado por `NativePort`, o equivalente no TS do `Transceiver` do Kotlin (T18).
+
+**Decisão — extensões à tabela, todas testadas:**
+- `RECOVERABLE_FAILURE` + cartão detectado → `READING`, se houver retentativa disponível.
+- `READING` + cartão detectado → "tag pendente"; se a leitura falhar de forma recuperável, lê de novo na hora (D017). `CHECKING` + cartão detectado → lê assim que o NFC ficar pronto.
+- `CHECKING` + cancelar → efetivado quando o NFC responder, **qualquer** que seja a resposta (pronto ou indisponível) — quem desistiu não fica esperando.
+- `WAITING_CARD`/`RECOVERABLE_FAILURE` + NFC desligado pelo operador → `ERROR(NFC_DISABLED)` na hora, em vez de esperar o timeout.
+- `ERROR(NFC_DISABLED)` não encerra sozinho: "verificar novamente" (`RECHECK`, também disparado quando o NFC é ligado) volta a `CHECKING` com as flags limpas; cancelar ou "fechar" resolve com `NFC_DISABLED` (RN-02). `ERROR(NFC_UNSUPPORTED)` encerra na hora e a UI não abre (RN-01).
+- **Cancelamento por estado** (#21): imediato em `WAITING_CARD` e `RECOVERABLE_FAILURE`; diferido em `CHECKING` e `READING` (RN-10); **ignorado** em `PROCESSING` e nos estados finais, porque a leitura já concluiu e o resultado é entregue — cancelar tarde não desfaz uma leitura.
+
+**Decisão — runner:**
+- Eventos processados em **fila**, um por vez: listener ou efeito que dispara outro evento (ex.: `cancel()` dentro de `onStateChange`) não causa reentrância nem notificação fora de ordem. Os efeitos de um evento rodam **antes** de os listeners serem notificados.
+- Exceção em listener do integrador é isolada (logada em `__DEV__`); Promise nativa rejeitada ou efeito que lança vira erro `UNKNOWN` no fluxo. A Promise de `capture()` sempre resolve (INV-3) e o SDK nunca fica preso em `ALREADY_RUNNING`.
+- A UI recebe uma **projeção** da sessão (`ActiveSession`): estado, valor, contadores, erro e cartão **mascarado**. O PAN completo só existe no resultado de `capture()` (RN-24).
+- `meta.durationMs` vai do `capture()` até a entrada no estado final — **sem** o tempo de exibição da tela final (sucesso 1,5 s, falha 3 s), para não enviesar `t_total` por desfecho. `readDurationMs` (`t_ciclo`) mede da entrada em `READING` da leitura bem-sucedida até o resultado.
+- Falhas automaticamente recuperáveis: `CARD_REMOVED`, `PROTOCOL_ERROR`, `PARSE_ERROR`. Com `maxRetries = N`, a falha N+1 encerra com `READ_FAILED_MAX_RETRIES` (RN-08).
+
+**Decisão — API:**
+- Resultado com quatro status: `success`, `cancelled`, `timeout`, `error` (RN-06).
+- `capture()` sem `CashTapProvider` montado **rejeita** (erro de integração). Parâmetro inválido e captura concorrente **resolvem** com `INVALID_AMOUNT`/`ALREADY_RUNNING` sem acionar o rádio (RN-03, RN-04). Moeda inválida também é `INVALID_AMOUNT`: é parâmetro da cobrança, e o texto ao operador ("Valor de cobrança inválido.") continua adequado.
+- `timeoutMs`/`maxRetries`: ausente ou NaN → padrão; fora da faixa, inclusive ±Infinity → limite mais próximo (RN-05, RN-08).
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> CHECKING: capture()
+    CHECKING --> WAITING_CARD: NFC pronto
+    CHECKING --> READING: NFC pronto + cartão já no campo
+    CHECKING --> CANCELLED: cancelado durante a verificação
+    CHECKING --> ERROR: NFC ausente / desligado
+    WAITING_CARD --> READING: cartão detectado
+    WAITING_CARD --> TIMEOUT: tempo esgotado
+    WAITING_CARD --> CANCELLED: cancelar
+    WAITING_CARD --> ERROR: NFC desligado
+    READING --> PROCESSING: leitura ok
+    READING --> RECOVERABLE_FAILURE: cartão afastado / falha recuperável
+    READING --> CANCELLED: cancelamento pendente
+    READING --> ERROR: falha fatal
+    RECOVERABLE_FAILURE --> WAITING_CARD: retentativa disponível
+    RECOVERABLE_FAILURE --> READING: cartão reaproximado / tag pendente
+    RECOVERABLE_FAILURE --> ERROR: retentativas esgotadas / NFC desligado
+    RECOVERABLE_FAILURE --> CANCELLED: cancelar
+    PROCESSING --> SUCCESS: PAN e validade presentes
+    PROCESSING --> ERROR: dados incompletos
+    ERROR --> CHECKING: NFC_DISABLED + verificar novamente
+    SUCCESS --> IDLE: resolve
+    CANCELLED --> IDLE: resolve
+    TIMEOUT --> IDLE: resolve
+    ERROR --> IDLE: resolve
+```
 
 **Alternativas:**
 - *Máquina de estados no Kotlin* — descartada pela especificação §2.3.
-- *Biblioteca de statecharts (XState)* — descartada: dependência de runtime para 10 estados; a função pura é testável exaustivamente (todas as combinações estado × evento nos testes de invariantes).
+- *Biblioteca de statecharts (XState)* — descartada: dependência de runtime para 10 estados; a função pura é varrida exaustivamente nos testes (estado × evento × variações de contexto).
 
-**Consequências:** fluxo inteiro testado sem device (fake timers + nativo simulado), incluindo timeout, retentativa, cancelamento em cada estado e cartão que sai e volta.
+**Consequências:** fluxo inteiro testado sem device (fake timers + nativo simulado), incluindo timeout, retentativa, cancelamento em cada estado, cartão que sai e volta, exceções de integrador e rejeições do nativo. O diagrama acima é a figura da máquina de estados no TCC.
 
 ---
 

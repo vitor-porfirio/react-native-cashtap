@@ -19,6 +19,8 @@ export type ResolvedParams = {
   timeoutMs: number;
   maxRetries: number;
   diagnostics: boolean;
+  /** Preenchido a partir da F6 (aparência por captura). */
+  appearance?: unknown;
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -49,7 +51,8 @@ export function resolveParams(
   }
 
   const currencyCode = params.currencyCode ?? DEFAULT_CURRENCY_CODE;
-  if (!/^\d{3}$/.test(currencyCode)) {
+  // Moeda inválida usa INVALID_AMOUNT: é parâmetro da cobrança, não do aparelho (D018).
+  if (typeof currencyCode !== 'string' || !/^\d{3}$/.test(currencyCode)) {
     return {
       ok: false,
       error: createError(
@@ -59,13 +62,14 @@ export function resolveParams(
     };
   }
 
+  // RN-05 / RN-08: ausente ou NaN → padrão; fora da faixa (inclusive ±Infinity) → limite mais próximo.
   const timeoutMs =
-    typeof params.timeoutMs === 'number' && Number.isFinite(params.timeoutMs)
+    typeof params.timeoutMs === 'number' && !Number.isNaN(params.timeoutMs)
       ? clamp(Math.round(params.timeoutMs), MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
       : DEFAULT_TIMEOUT_MS;
 
   const maxRetries =
-    typeof params.maxRetries === 'number' && Number.isFinite(params.maxRetries)
+    typeof params.maxRetries === 'number' && !Number.isNaN(params.maxRetries)
       ? clamp(Math.floor(params.maxRetries), MIN_MAX_RETRIES, MAX_MAX_RETRIES)
       : DEFAULT_MAX_RETRIES;
 
@@ -74,7 +78,8 @@ export function resolveParams(
     params: {
       amountCents,
       currencyCode,
-      reference: params.reference,
+      reference:
+        typeof params.reference === 'string' ? params.reference : undefined,
       timeoutMs,
       maxRetries,
       diagnostics: params.diagnostics === true,

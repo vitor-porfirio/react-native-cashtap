@@ -196,9 +196,8 @@ describe('capture() — caminho feliz (E5-H1)', () => {
         ],
       }),
     });
-    expect(result.meta.durationMs).toBe(
-      350 + DEFAULT_DISPLAY_DURATIONS.success
-    );
+    // D018: duração vai até o desfecho, sem o tempo de exibição da tela de sucesso.
+    expect(result.meta.durationMs).toBe(350);
     expect(result.meta.captureId).toMatch(/^ct_/);
   });
 
@@ -293,12 +292,12 @@ describe('NFC indisponível (RN-01, RN-02)', () => {
     const promise = capture({ amountCents: 100 });
     await flush();
     await advance(60_000);
-    expect(getActiveSession()?.snapshot.state).toBe('ERROR');
+    expect(getActiveSession()?.state).toBe('ERROR');
 
     native.startResult = { ok: true };
     native.setNfc('READY');
     await flush();
-    expect(getActiveSession()?.snapshot.state).toBe('WAITING_CARD');
+    expect(getActiveSession()?.state).toBe('WAITING_CARD');
     expect(seen.map((e) => e.state)).toEqual([
       'CHECKING',
       'ERROR',
@@ -318,7 +317,7 @@ describe('NFC indisponível (RN-01, RN-02)', () => {
     native.startResult = { ok: true };
     dispatchFromUi({ type: 'RECHECK' });
     await flush();
-    expect(getActiveSession()?.snapshot.state).toBe('WAITING_CARD');
+    expect(getActiveSession()?.state).toBe('WAITING_CARD');
     cancel();
     await flush();
     await promise;
@@ -342,7 +341,7 @@ describe('timeout (E5-H2)', () => {
     const promise = capture({ amountCents: 100 });
     await flush();
     await advance(29_999);
-    expect(getActiveSession()?.snapshot.state).toBe('WAITING_CARD');
+    expect(getActiveSession()?.state).toBe('WAITING_CARD');
     await advance(1);
     expect(native.readerOn).toBe(false);
     await advance(DEFAULT_DISPLAY_DURATIONS.failure);
@@ -359,9 +358,9 @@ describe('timeout (E5-H2)', () => {
     const promise = capture({ amountCents: 100, timeoutMs: requested });
     await flush();
     await advance(effective - 1);
-    expect(getActiveSession()?.snapshot.state).toBe('WAITING_CARD');
+    expect(getActiveSession()?.state).toBe('WAITING_CARD');
     await advance(1);
-    expect(getActiveSession()?.snapshot.state).toBe('TIMEOUT');
+    expect(getActiveSession()?.state).toBe('TIMEOUT');
     await advance(DEFAULT_DISPLAY_DURATIONS.failure);
     await promise;
   });
@@ -372,7 +371,7 @@ describe('timeout (E5-H2)', () => {
     native.tap();
     await flush();
     await advance(60_000);
-    expect(getActiveSession()?.snapshot.state).toBe('READING');
+    expect(getActiveSession()?.state).toBe('READING');
     native.finishRead({ ok: true, card });
     await flush();
     await advance(DEFAULT_DISPLAY_DURATIONS.success);
@@ -394,13 +393,13 @@ describe('retentativa (E5-H3)', () => {
     await flush();
     await advance(20_000);
     await failOnce();
-    expect(getActiveSession()?.snapshot.state).toBe('RECOVERABLE_FAILURE');
+    expect(getActiveSession()?.state).toBe('RECOVERABLE_FAILURE');
     await advance(DEFAULT_DISPLAY_DURATIONS.recovery);
-    expect(getActiveSession()?.snapshot.state).toBe('WAITING_CARD');
+    expect(getActiveSession()?.state).toBe('WAITING_CARD');
 
     // RN-09: 25 s depois da retentativa ainda está aguardando (timer reiniciado).
     await advance(25_000);
-    expect(getActiveSession()?.snapshot.state).toBe('WAITING_CARD');
+    expect(getActiveSession()?.state).toBe('WAITING_CARD');
 
     native.tap();
     await flush();
@@ -494,7 +493,7 @@ describe('cancelamento (E5-H4)', () => {
     cancel();
     await flush();
     expect(native.cancelReads).toBe(1);
-    expect(getActiveSession()?.snapshot.state).toBe('READING');
+    expect(getActiveSession()?.state).toBe('READING');
     expect(native.readerOn).toBe(true);
 
     native.finishRead({ ok: false, code: 'CANCELLED_BY_USER', detail: '' });
@@ -641,5 +640,250 @@ describe('integração com a UI e diagnóstico', () => {
     await flush();
     await promise;
     expect(getLastDiagnostics()).toBeNull();
+  });
+});
+
+describe('robustez do runner (D018)', () => {
+  it('exceção em listener do integrador não trava o ciclo nem o SDK', async () => {
+    const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+    onStateChange(() => {
+      throw new Error('bug do app');
+    });
+    const first = capture({ amountCents: 100 });
+    await flush();
+    cancel();
+    await flush();
+    await expect(first).resolves.toMatchObject({ status: 'cancelled' });
+    expect(native.readerOn).toBe(false);
+
+    const second = capture({ amountCents: 100 });
+    await flush();
+    expect(getActiveSession()?.state).toBe('WAITING_CARD');
+    cancel();
+    await flush();
+    await expect(second).resolves.toMatchObject({ status: 'cancelled' });
+    error.mockRestore();
+  });
+
+  it('startReaderMode rejeitando vira ERROR UNKNOWN e resolve', async () => {
+    native.startReaderMode.mockRejectedValueOnce(new Error('boom'));
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.failure);
+    await expect(promise).resolves.toMatchObject({
+      status: 'error',
+      error: { code: 'UNKNOWN' },
+    });
+  });
+
+  it('readCard rejeitando vira ERROR UNKNOWN e resolve', async () => {
+    native.readCard.mockRejectedValueOnce(new Error('boom'));
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    native.tap();
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.failure);
+    await expect(promise).resolves.toMatchObject({
+      status: 'error',
+      error: { code: 'UNKNOWN' },
+    });
+    expect(native.readerOn).toBe(false);
+  });
+
+  it('moeda numérica vinda de JS sem tipos é rejeitada antes do rádio', async () => {
+    const result = await capture({
+      amountCents: 100,
+      currencyCode: 986 as unknown as string,
+    });
+    expect(result).toMatchObject({
+      status: 'error',
+      error: { code: 'INVALID_AMOUNT' },
+    });
+    expect(native.startReaderMode).not.toHaveBeenCalled();
+  });
+
+  it('reentrância: cancel() chamado por listener ao entrar em READING mantém ordem e efeitos', async () => {
+    const seen: string[] = [];
+    onStateChange((e) => {
+      seen.push(e.state);
+      if (e.state === 'READING') cancel();
+    });
+    const late: string[] = [];
+    onStateChange((e) => late.push(e.state));
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    native.tap();
+    await flush();
+    // a leitura começou antes do pedido de cancelamento (RN-10)
+    expect(native.readCard.mock.invocationCallOrder[0]!).toBeLessThan(
+      native.cancelRead.mock.invocationCallOrder[0]!
+    );
+    native.finishRead({ ok: false, code: 'CANCELLED_BY_USER', detail: '' });
+    await flush();
+    await expect(promise).resolves.toMatchObject({ status: 'cancelled' });
+    // todos os listeners veem a mesma ordem
+    expect(late).toEqual(seen);
+    expect(seen.indexOf('READING')).toBeLessThan(seen.indexOf('CANCELLED'));
+  });
+
+  it('falha ao assinar o diagnóstico rejeita sem deixar o SDK preso em ALREADY_RUNNING', async () => {
+    jest.spyOn(native, 'onDiagnostic').mockImplementationOnce(() => {
+      throw new Error('LINKING_ERROR');
+    });
+    await expect(
+      capture({ amountCents: 100, diagnostics: true })
+    ).rejects.toThrow('LINKING_ERROR');
+    const next = capture({ amountCents: 100 });
+    await flush();
+    expect(getActiveSession()?.state).toBe('WAITING_CARD');
+    cancel();
+    await flush();
+    await next;
+  });
+
+  it('D018: NFC desligado durante a espera vai para ERROR(NFC_DISABLED) e volta ao ligar', async () => {
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    native.setNfc('DISABLED');
+    await flush();
+    expect(getActiveSession()).toMatchObject({
+      state: 'ERROR',
+      error: { code: 'NFC_DISABLED' },
+    });
+    expect(native.readerOn).toBe(false);
+    native.setNfc('READY');
+    await flush();
+    expect(getActiveSession()?.state).toBe('WAITING_CARD');
+    cancel();
+    await flush();
+    await promise;
+  });
+
+  it('D018: cancelar em PROCESSING não desfaz uma leitura concluída', async () => {
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    native.tap();
+    await flush();
+    native.finishRead({ ok: true, card });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(getActiveSession()?.state).toBe('PROCESSING');
+    cancel();
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.success);
+    await expect(promise).resolves.toMatchObject({ status: 'success' });
+  });
+
+  it('RN-24: nenhuma view publicada para a UI contém o PAN completo', async () => {
+    const views: unknown[] = [];
+    subscribeActiveSession((view) => views.push(view));
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    native.tap();
+    await flush();
+    native.finishRead({ ok: true, card });
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.success);
+    await promise;
+    const all = JSON.stringify(views);
+    expect(views.length).toBeGreaterThan(4);
+    expect(all).not.toContain(card.pan);
+    expect(all).toContain(card.panMasked);
+  });
+
+  it('getActiveSession devolve a mesma referência enquanto nada muda (useSyncExternalStore)', async () => {
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    expect(getActiveSession()).toBe(getActiveSession());
+    cancel();
+    await flush();
+    await promise;
+  });
+
+  it('D018: duração da falha vai até o desfecho, sem o tempo da tela final', async () => {
+    const promise = capture({ amountCents: 100, timeoutMs: 10_000 });
+    await flush();
+    await advance(10_000);
+    await advance(DEFAULT_DISPLAY_DURATIONS.failure);
+    const result = await promise;
+    expect(result.meta.durationMs).toBe(10_000);
+  });
+
+  it('t_ciclo é medido a partir da leitura que teve sucesso, mesmo com tag pendente', async () => {
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    native.tap();
+    await flush();
+    clock += 100;
+    native.tap(); // tag pendente
+    await flush();
+    clock += 400;
+    native.finishRead({ ok: false, code: 'CARD_REMOVED', detail: '' });
+    await flush();
+    clock += 200;
+    native.finishRead({ ok: true, card });
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.success);
+    const result = await promise;
+    expect(result.meta.readDurationMs).toBe(200);
+  });
+});
+
+describe('falhas síncronas do nativo (D018)', () => {
+  it('startReaderMode lançando de forma síncrona vira ERROR UNKNOWN', async () => {
+    native.startReaderMode.mockImplementationOnce(() => {
+      throw new Error('sync');
+    });
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.failure);
+    await expect(promise).resolves.toMatchObject({
+      error: { code: 'UNKNOWN' },
+    });
+  });
+
+  it('readCard lançando de forma síncrona vira ERROR UNKNOWN', async () => {
+    native.readCard.mockImplementationOnce(() => {
+      throw new Error('sync');
+    });
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    native.tap();
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.failure);
+    await expect(promise).resolves.toMatchObject({
+      error: { code: 'UNKNOWN' },
+    });
+  });
+
+  it('cancelRead lançando não impede o cancelamento de seguir', async () => {
+    const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+    native.cancelRead.mockImplementationOnce(() => {
+      throw new Error('sync');
+    });
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    native.tap();
+    await flush();
+    cancel();
+    native.finishRead({ ok: true, card });
+    await flush();
+    await expect(promise).resolves.toMatchObject({ status: 'cancelled' });
+    error.mockRestore();
+  });
+
+  it('falha ao assinar eventos do nativo rejeita e libera o SDK', async () => {
+    jest.spyOn(native, 'onTagDetected').mockImplementationOnce(() => {
+      throw new Error('LINKING_ERROR');
+    });
+    await expect(capture({ amountCents: 100 })).rejects.toThrow(
+      'LINKING_ERROR'
+    );
+    const next = capture({ amountCents: 100 });
+    await flush();
+    expect(getActiveSession()?.state).toBe('WAITING_CARD');
+    cancel();
+    await flush();
+    await next;
   });
 });

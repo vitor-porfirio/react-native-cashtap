@@ -1,3 +1,4 @@
+import type { CaptureState } from './core/machine';
 import type { CashTapError } from './errors';
 
 export const NFC_STATUSES = ['UNSUPPORTED', 'DISABLED', 'READY'] as const;
@@ -35,7 +36,7 @@ export type CaptureParams = {
   timeoutMs?: number;
   /** Retentativas automáticas em falha recuperável. Padrão 2; faixa 0–5 (RN-08). */
   maxRetries?: number;
-  /** Registra transições, tempos e comandos (mascarados) para `CashTapDiagnostics` (E7-H3). */
+  /** Registra transições, tempos e comandos (mascarados) para o painel de diagnóstico (E7-H3). */
   diagnostics?: boolean;
 };
 
@@ -81,12 +82,12 @@ export type CaptureResult =
   | { status: 'timeout'; error: CashTapError; meta: CaptureMeta }
   | { status: 'error'; error: CashTapError; meta: CaptureMeta };
 
-export type { CaptureState } from './core/machine';
+export type { CaptureState };
 
 /** Notificação de transição do ciclo, para instrumentação do app hospedeiro. */
 export type CaptureStateEvent = {
-  state: import('./core/machine').CaptureState;
-  previous: import('./core/machine').CaptureState;
+  state: CaptureState;
+  previous: CaptureState;
   captureId: string;
   /** Leituras iniciadas até aqui. */
   attempts: number;

@@ -1,16 +1,19 @@
-import type { CaptureResult } from '../types';
+import type { ErrorCode } from '../errors';
+import type { CaptureResult, CardBrand } from '../types';
 
 /**
  * Linha de medição de uma captura, no formato do Apêndice B do TCC
  * (E8-H2: tempos por etapa exportáveis em formato tabular).
  */
+export type MeasurementOutcome =
+  'sucesso' | 'recuperado' | 'falha' | 'cancelado' | 'expirado';
+
 export type MeasurementRow = {
   captureId: string;
-  /** sucesso | recuperado | falha | cancelado | expirado */
-  outcome: string;
-  /** Código do erro, quando houver. */
-  category: string;
-  brand: string;
+  outcome: MeasurementOutcome;
+  /** Código do erro do catálogo, ou vazio. */
+  category: ErrorCode | '';
+  brand: CardBrand | '';
   attempts: number;
   t_ciclo: number | null;
   t_total: number;
@@ -38,7 +41,7 @@ const round = (value: number | undefined): number | null =>
   value === undefined ? null : Math.round(value * 10) / 10;
 
 /** Desfecho no vocabulário do TCC: sucesso na 1ª leitura, recuperado após retentativa, ou falha. */
-function outcomeLabel(result: CaptureResult): string {
+function outcomeLabel(result: CaptureResult): MeasurementOutcome {
   switch (result.status) {
     case 'success':
       return result.meta.attempts > 1 ? 'recuperado' : 'sucesso';
@@ -61,7 +64,7 @@ export function toMeasurementRow(result: CaptureResult): MeasurementRow {
     brand: result.status === 'success' ? result.card.brand : '',
     attempts: result.meta.attempts,
     t_ciclo: round(result.meta.readDurationMs),
-    t_total: round(result.meta.durationMs) ?? 0,
+    t_total: Math.round(result.meta.durationMs * 10) / 10,
     t_ppse: step('SELECT_PPSE'),
     t_aid: step('SELECT_AID'),
     t_gpo: step('GET_PROCESSING_OPTIONS'),

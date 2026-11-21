@@ -8,14 +8,15 @@ import {
   subscribeNfcStatus,
   subscribeTagDetected,
 } from '../native';
-import { diagnosticsRecorder } from './diagnostics';
 import type {
   CaptureParams,
   CaptureResult,
   CaptureStateEvent,
+  CardBrand,
   Unsubscribe,
 } from '../types';
-import type { MachineEvent, MachineSnapshot } from './machine';
+import { diagnosticsRecorder } from './diagnostics';
+import type { CaptureState, MachineEvent, MachineSnapshot } from './machine';
 import { resolveParams, type ResolvedParams } from './params';
 import {
   CaptureSession,
@@ -24,11 +25,25 @@ import {
   type SessionDeps,
 } from './session';
 
-/** Visão da sessão ativa para a UI do SDK. */
+/**
+ * Projeção da sessão ativa para a UI do SDK. Nunca carrega o PAN completo:
+ * ele só existe no resultado de `capture()` (RN-24).
+ */
 export type ActiveSession = {
   captureId: string;
-  params: Readonly<ResolvedParams>;
-  snapshot: MachineSnapshot;
+  state: CaptureState;
+  params: Pick<ResolvedParams, 'amountCents' | 'currencyCode' | 'maxRetries'> &
+    Partial<Pick<ResolvedParams, 'appearance'>>;
+  attempts: number;
+  failures: number;
+  cancelRequested: boolean;
+  error?: CashTapError;
+  card?: {
+    panMasked: string;
+    brand: CardBrand;
+    expiry: string;
+    applicationLabel?: string;
+  };
 };
 
 const monotonicNow = (): number =>
@@ -59,6 +74,8 @@ function defaultDeps(): SessionDeps {
 
 let deps: SessionDeps = defaultDeps();
 let active: CaptureSession | null = null;
+/** Última projeção publicada: estável entre mudanças (useSyncExternalStore). */
+let activeView: ActiveSession | null = null;
 let uiHosts = 0;
 let requireUiHost = true;
 let sequence = 0;
@@ -71,6 +88,56 @@ function nextCaptureId(): string {
     .toString(16)
     .padStart(4, '0');
   return `ct_${Date.now().toString(36)}_${sequence}_${random}`;
+}
+
+function errorOf(snapshot: MachineSnapshot): CashTapError | undefined {
+  return 'error' in snapshot ? snapshot.error : undefined;
+}
+
+function project(session: CaptureSession): ActiveSession {
+  const snapshot = session.current;
+  const { amountCents, currencyCode, maxRetries, appearance } =
+    session.settings;
+  const error = errorOf(snapshot);
+  const card = 'card' in snapshot ? snapshot.card : undefined;
+  return {
+    captureId: session.captureId,
+    state: snapshot.state,
+    params: {
+      amountCents,
+      currencyCode,
+      maxRetries,
+      ...(appearance !== undefined && { appearance }),
+    },
+    attempts: snapshot.context.attempts,
+    failures: snapshot.context.failures,
+    cancelRequested: snapshot.context.cancelRequested,
+    ...(error && { error }),
+    ...(card && {
+      card: {
+        panMasked: card.panMasked,
+        brand: card.brand,
+        expiry: card.expiry,
+        ...(card.applicationLabel !== undefined && {
+          applicationLabel: card.applicationLabel,
+        }),
+      },
+    }),
+  };
+}
+
+function safely(listener: () => void): void {
+  try {
+    listener();
+  } catch (error) {
+    if (__DEV__)
+      console.error('react-native-cashtap: um listener lançou exceção', error);
+  }
+}
+
+function publish(view: ActiveSession | null): void {
+  activeView = view;
+  sessionListeners.forEach((listener) => safely(() => listener(view)));
 }
 
 function immediateFailure(
@@ -96,35 +163,34 @@ function notify(session: CaptureSession, change: SessionChange): void {
   if (session.settings.diagnostics) {
     diagnosticsRecorder.transition(change.snapshot.state, change.timestamp);
   }
+  const error = errorOf(change.snapshot);
   const event: CaptureStateEvent = {
     state: change.snapshot.state,
     previous: change.previous,
     captureId: session.captureId,
     attempts: change.snapshot.context.attempts,
-    ...(change.snapshot.context.error && {
-      error: change.snapshot.context.error,
-    }),
+    ...(error && { error }),
     timestamp: change.timestamp,
   };
-  stateListeners.forEach((listener) => listener(event));
-  const view = getActiveSession();
-  sessionListeners.forEach((listener) => listener(view));
+  stateListeners.forEach((listener) => safely(() => listener(event)));
+  if (active === session) publish(project(session));
 }
 
 /**
  * Inicia uma captura (E5-H1). Resolve sempre com um desfecho; nunca rejeita
  * por erro esperado. Parâmetro inválido (RN-03) e captura concorrente (RN-04)
- * resolvem na hora, sem acionar o rádio.
+ * resolvem na hora, sem acionar o rádio. Rejeita só por erro de integração
+ * (Provider ausente, módulo nativo não instalado).
  */
 export async function capture(params: CaptureParams): Promise<CaptureResult> {
   if (requireUiHost && uiHosts === 0) {
-    // Erro de integração, não de operação: por isso rejeita em vez de resolver.
     throw new Error(
       'react-native-cashtap: monte <CashTapProvider> na raiz do app antes de chamar capture().'
     );
   }
   const captureId = nextCaptureId();
-  const reference = params?.reference;
+  const reference =
+    typeof params?.reference === 'string' ? params.reference : undefined;
   if (active) {
     return immediateFailure(
       captureId,
@@ -143,30 +209,35 @@ export async function capture(params: CaptureParams): Promise<CaptureResult> {
     deps,
     (change) => notify(session, change)
   );
-  active = session;
   let stopDiagnostics: Unsubscribe = () => {};
-  if (resolved.params.diagnostics) {
-    diagnosticsRecorder.start(
-      captureId,
-      deps.clock.epochMs(),
-      deps.clock.now()
-    );
-    stopDiagnostics = deps.native.onDiagnostic((exchange) =>
-      diagnosticsRecorder.exchange(exchange, deps.clock.now())
-    );
-  }
+  active = session;
   try {
+    if (resolved.params.diagnostics) {
+      diagnosticsRecorder.start(
+        captureId,
+        deps.clock.epochMs(),
+        deps.clock.now()
+      );
+      stopDiagnostics = deps.native.onDiagnostic((exchange) =>
+        diagnosticsRecorder.exchange(exchange, deps.clock.now())
+      );
+    }
+    publish(project(session));
     const result = await session.start();
     if (resolved.params.diagnostics) diagnosticsRecorder.finish(result);
     return result;
   } finally {
-    stopDiagnostics();
+    safely(stopDiagnostics);
     active = null;
-    sessionListeners.forEach((listener) => listener(null));
+    publish(null);
   }
 }
 
-/** Cancela a captura ativa (RN-10). Sem captura ativa, não faz nada. */
+/**
+ * Cancela a captura ativa (RN-10). Imediato em WAITING_CARD e RECOVERABLE_FAILURE;
+ * diferido em CHECKING e READING; ignorado em PROCESSING e nos estados finais,
+ * quando o resultado já existe (D018). Sem captura ativa, não faz nada.
+ */
 export function cancel(): void {
   active?.dispatch({ type: 'CANCEL' });
 }
@@ -185,18 +256,16 @@ export function onStateChange(
 /** Chamado pelo `CashTapProvider` ao montar; devolve a função de desmontagem. */
 export function registerUiHost(): Unsubscribe {
   uiHosts += 1;
+  let registered = true;
   return () => {
+    if (!registered) return;
+    registered = false;
     uiHosts = Math.max(0, uiHosts - 1);
   };
 }
 
 export function getActiveSession(): ActiveSession | null {
-  if (!active) return null;
-  return {
-    captureId: active.captureId,
-    params: active.settings,
-    snapshot: active.current,
-  };
+  return activeView;
 }
 
 export function subscribeActiveSession(
@@ -228,6 +297,7 @@ export function __setDepsForTests(
 export function __resetForTests(): void {
   deps = defaultDeps();
   active = null;
+  activeView = null;
   uiHosts = 0;
   requireUiHost = true;
   stateListeners.clear();
