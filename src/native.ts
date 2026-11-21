@@ -1,6 +1,14 @@
 import { Platform } from 'react-native';
 import NativeCashtap, { type Spec } from './NativeCashtap';
-import { NFC_STATUSES, type NfcStatus, type Unsubscribe } from './types';
+import {
+  CARD_BRANDS,
+  EMV_STEPS,
+  NFC_STATUSES,
+  type CardBrand,
+  type EmvStep,
+  type NfcStatus,
+  type Unsubscribe,
+} from './types';
 
 export const LINKING_ERROR =
   "react-native-cashtap: o módulo nativo 'Cashtap' não foi encontrado. " +
@@ -22,28 +30,33 @@ export function getNativeModule(): Spec | null {
   return NativeCashtap;
 }
 
-export function isNfcStatus(value: unknown): value is NfcStatus {
+function includes<T extends string>(
+  list: readonly T[],
+  value: unknown
+): value is T {
   return (
-    typeof value === 'string' &&
-    (NFC_STATUSES as readonly string[]).includes(value)
+    typeof value === 'string' && (list as readonly string[]).includes(value)
   );
 }
 
-function toNfcStatus(value: unknown): NfcStatus {
-  if (!isNfcStatus(value)) {
-    throw new Error(
-      `react-native-cashtap: status de NFC inválido recebido do nativo: ${String(value)}`
-    );
-  }
-  return value;
+export function isNfcStatus(value: unknown): value is NfcStatus {
+  return includes(NFC_STATUSES, value);
 }
+
+// ---- Status do NFC ----
 
 export async function nativeGetNfcStatus(): Promise<NfcStatus> {
   const module = getNativeModule();
   if (!module) {
     return 'UNSUPPORTED';
   }
-  return toNfcStatus(await module.getNfcStatus());
+  const value = await module.getNfcStatus();
+  if (!isNfcStatus(value)) {
+    throw new Error(
+      `react-native-cashtap: status de NFC inválido recebido do nativo: ${String(value)}`
+    );
+  }
+  return value;
 }
 
 export function nativeOpenNfcSettings(): void {
@@ -64,6 +77,252 @@ export function subscribeNfcStatus(
       console.warn(
         `react-native-cashtap: evento de NFC descartado: ${String(value)}`
       );
+    }
+  });
+  return () => subscription.remove();
+}
+
+// ---- Reader mode ----
+
+export const START_ERROR_CODES = [
+  'NFC_UNSUPPORTED',
+  'NFC_DISABLED',
+  'UNKNOWN',
+] as const;
+export type StartErrorCode = (typeof START_ERROR_CODES)[number];
+
+export type NativeFailure<C extends string> = {
+  ok: false;
+  code: C;
+  detail: string;
+};
+
+/** Erros esperados atravessam como valor, nunca como exceção (typescript-api.md). */
+function toFailure<C extends string>(
+  error: unknown,
+  codes: readonly C[],
+  fallback: C
+): NativeFailure<C> {
+  const code = isObject(error) ? error.code : undefined;
+  const message = isObject(error) ? error.message : undefined;
+  return {
+    ok: false,
+    code: includes(codes, code) ? code : fallback,
+    detail: typeof message === 'string' ? message : String(error),
+  };
+}
+
+export async function nativeStartReaderMode(): Promise<
+  { ok: true } | NativeFailure<StartErrorCode>
+> {
+  const module = getNativeModule();
+  if (!module) {
+    return { ok: false, code: 'NFC_UNSUPPORTED', detail: 'fora do Android' };
+  }
+  try {
+    await module.startReaderMode();
+    return { ok: true };
+  } catch (error) {
+    return toFailure(error, START_ERROR_CODES, 'UNKNOWN');
+  }
+}
+
+/** RN-11: nunca lança; desligar o rádio é sempre seguro. */
+export async function nativeStopReaderMode(): Promise<void> {
+  try {
+    await getNativeModule()?.stopReaderMode();
+  } catch {
+    // Sem módulo ou rádio já desligado: nada a fazer.
+  }
+}
+
+// ---- Leitura do cartão ----
+
+export const READ_ERROR_CODES = [
+  'CARD_REMOVED',
+  'UNSUPPORTED_BRAND',
+  'PROTOCOL_ERROR',
+  'PARSE_ERROR',
+  'INCOMPLETE_DATA',
+  'CANCELLED_BY_USER',
+  'UNKNOWN',
+] as const;
+export type ReadErrorCode = (typeof READ_ERROR_CODES)[number];
+
+/** Resultado bruto do diálogo EMV, já validado. Uso interno do SDK. */
+export type NativeCardRead = {
+  pan: string;
+  panMasked: string;
+  expiry: string;
+  brand: CardBrand;
+  aid: string;
+  applicationLabel?: string;
+  panSequenceNumber?: string;
+  cryptogramPresent: boolean;
+  stepDurationsMs: Record<EmvStep, number>;
+};
+
+export type NativeReadOutcome =
+  { ok: true; card: NativeCardRead } | NativeFailure<ReadErrorCode>;
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function optionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === 'string';
+}
+
+/** 6 primeiros + `*` + 4 últimos (RN-24), conferido contra o próprio PAN. */
+function isMaskOf(masked: string, pan: string): boolean {
+  if (masked.length !== pan.length || pan.length < 11) return false;
+  const middle = masked.slice(6, -4);
+  return (
+    masked.slice(0, 6) === pan.slice(0, 6) &&
+    masked.slice(-4) === pan.slice(-4) &&
+    /^\*+$/.test(middle)
+  );
+}
+
+function isDuration(value: unknown): value is number {
+  return typeof value === 'number' && value >= 0;
+}
+
+function readStepDurations(value: unknown): Record<EmvStep, number> | null {
+  if (!isObject(value)) return null;
+  const {
+    SELECT_PPSE: ppse,
+    SELECT_AID: aid,
+    GET_PROCESSING_OPTIONS: gpo,
+    READ_RECORD: read,
+  } = value;
+  if (
+    !isDuration(ppse) ||
+    !isDuration(aid) ||
+    !isDuration(gpo) ||
+    !isDuration(read)
+  ) {
+    return null;
+  }
+  return {
+    SELECT_PPSE: ppse,
+    SELECT_AID: aid,
+    GET_PROCESSING_OPTIONS: gpo,
+    READ_RECORD: read,
+  };
+}
+
+/** INV-4 começa aqui: nada sem PAN e validade bem formados chega à máquina de estados. */
+export function parseCardRead(json: string): NativeCardRead | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (!isObject(data)) return null;
+  const {
+    pan,
+    panMasked,
+    expiry,
+    brand,
+    aid,
+    applicationLabel,
+    panSequenceNumber,
+    cryptogramPresent,
+  } = data;
+  const stepDurationsMs = readStepDurations(data.stepDurationsMs);
+  if (
+    typeof pan !== 'string' ||
+    !/^\d{12,19}$/.test(pan) ||
+    typeof panMasked !== 'string' ||
+    !isMaskOf(panMasked, pan) ||
+    typeof expiry !== 'string' ||
+    !/^\d{2}(0[1-9]|1[0-2])$/.test(expiry) ||
+    !includes(CARD_BRANDS, brand) ||
+    typeof aid !== 'string' ||
+    !/^[0-9A-F]{10,32}$/.test(aid) ||
+    !optionalString(applicationLabel) ||
+    !optionalString(panSequenceNumber) ||
+    typeof cryptogramPresent !== 'boolean' ||
+    !stepDurationsMs
+  ) {
+    return null;
+  }
+  return {
+    pan,
+    panMasked,
+    expiry,
+    brand,
+    aid,
+    ...(applicationLabel !== undefined && { applicationLabel }),
+    ...(panSequenceNumber !== undefined && { panSequenceNumber }),
+    cryptogramPresent,
+    stepDurationsMs,
+  };
+}
+
+export async function nativeReadCard(
+  amountCents: number,
+  currencyCode: string,
+  diagnostics: boolean
+): Promise<NativeReadOutcome> {
+  const module = getNativeModule();
+  if (!module) {
+    return { ok: false, code: 'UNKNOWN', detail: 'fora do Android' };
+  }
+  let json: string;
+  try {
+    json = await module.readCard(amountCents, currencyCode, diagnostics);
+  } catch (error) {
+    return toFailure(error, READ_ERROR_CODES, 'UNKNOWN');
+  }
+  const card = parseCardRead(json);
+  if (!card) {
+    // Não repassa o JSON: ele pode conter o PAN (RN-23).
+    return {
+      ok: false,
+      code: 'PARSE_ERROR',
+      detail: 'resultado do nativo fora do contrato',
+    };
+  }
+  return { ok: true, card };
+}
+
+export function nativeCancelRead(): void {
+  getNativeModule()?.cancelRead();
+}
+
+// ---- Eventos da sessão ----
+
+export function subscribeTagDetected(listener: () => void): Unsubscribe {
+  const module = getNativeModule();
+  if (!module) {
+    return () => {};
+  }
+  const subscription = module.onTagDetected(() => listener());
+  return () => subscription.remove();
+}
+
+/** Troca de APDU mascarada na origem, para o modo de diagnóstico (E7-H3). */
+export type DiagnosticExchange = {
+  step: EmvStep;
+  command: string;
+  response: string;
+  sw: string;
+  durationMs: number;
+};
+
+export function subscribeDiagnostic(
+  listener: (exchange: DiagnosticExchange) => void
+): Unsubscribe {
+  const module = getNativeModule();
+  if (!module) {
+    return () => {};
+  }
+  const subscription = module.onDiagnostic((event) => {
+    if (includes(EMV_STEPS, event.step)) {
+      listener({ ...event, step: event.step });
     }
   });
   return () => subscription.remove();

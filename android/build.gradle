@@ -29,8 +29,17 @@ android {
   defaultConfig {
     minSdkVersion getExtOrDefault("minSdkVersion")
   }
+
+  buildTypes {
+    debug {
+      // Relatório de cobertura dos testes JVM: createDebugUnitTestCoverageReport
+      enableUnitTestCoverage true
+    }
+  }
 }
 
 dependencies {
   implementation "com.facebook.react:react-android"
+
+  testImplementation "junit:junit:4.13.2"
 }

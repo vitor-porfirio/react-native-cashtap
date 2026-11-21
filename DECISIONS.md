@@ -168,6 +168,106 @@ Modelo de entrada:
 
 ---
 
+## D011 — F2, F3 e F4 entregues num único PR  (2026-11-21 · F2–F4)
+
+**Contexto:** a D007 prevê um PR por fase. Sessão NFC (F2), diálogo EMV (F3) e extração de dados (F4) formam uma única operação atômica (`readCard`): o orquestrador depende do extrator e da máscara, e nenhuma das fases é verificável isoladamente no device sem as outras.
+
+**Decisão:** um PR `fase/f2-f4-nucleo-nativo`, com uma rodada de QA + Tech Lead cobrindo as issues #6–#17 e #23.
+
+**Consequências:** uma revisão maior e mais coerente; a trilha por issue continua nos commits e no corpo do PR.
+
+---
+
+## D012 — Reader mode: flags, ciclo de vida e tag de uso único  (2026-11-21 · F2 · #8, #9)
+
+**Contexto:** E2-H2 pede detecção rápida, liberação do rádio e respeito ao ciclo de vida da Activity; E2-H3 pede canal IsoDep fechado em qualquer caminho.
+
+**Decisão:**
+- `enableReaderMode` com `FLAG_READER_NFC_A | NFC_B | SKIP_NDEF_CHECK | NO_PLATFORM_SOUNDS`: cartões EMV são ISO 14443 A ou B, não carregam NDEF (checar seria só latência), e o feedback sonoro/tátil é do SDK.
+- `NfcSessionManager` usa `currentActivity` no momento do uso, desliga em `onHostPause`, religa em `onHostResume` se a sessão estiver ativa, e se registra/desregistra como `LifecycleEventListener`.
+- A `Tag` detectada é entregue **uma vez** (`takeTag`): cada leitura exige uma aproximação, o que torna a retentativa (RN-07) previsível.
+- `IsoDepTransceiver`: timeout de 5 s, `TagLostException`/`IOException`/`IllegalStateException` → `LinkLostException` → `CARD_REMOVED`; `close()` em `finally` (RN-11).
+- Toda troca de APDU num executor de thread única; `invalidate()` encerra executor, sessão e monitor.
+
+**Alternativas:**
+- *`enableForegroundDispatch`* — descartada: entrega a tag via `Intent`/`onNewIntent` da Activity do integrador, exigindo código no app hospedeiro e passando pelo despacho NDEF do sistema.
+
+**Consequências:** o integrador não escreve nada na Activity; o rádio é liberado ao sair do app. Comportamento real de pause/resume só se comprova no device (roteiro F2).
+
+---
+
+## D013 — Valores de terminal no PDOL  (2026-11-21 · F3 · #14)
+
+**Contexto:** o GPO precisa responder ao PDOL com o comprimento exato de cada elemento (RN-16, E3-H4); um byte errado faz o cartão recusar sem explicação (risco nº 1 da especificação).
+
+**Decisão:** `PdolBuilder` preenche: 9F02 com o **valor real** em BCD n12 (a especificação permite zero; o valor real evita recusa por "valor zero" em alguns kernels Visa), 9F03 zero, 9F1A `0076` (Brasil), 5F2A pela moeda informada (`0986`), 95 zero, 9A/9F21 data e hora locais, 9C `00`, 9F37 4 bytes de `SecureRandom`, 9F66 (TTQ) `36004000`, 9F35 `22`, 9F33 `E0F0C8`, 9F40 `6000F0A001`, 9F4E "CashTap". Tag desconhecida vai zerada. Ajuste de comprimento conforme EMV Book 3 §5.4: numérico completa/trunca à esquerda; demais, à direita.
+
+**Alternativas:**
+- *Tudo zerado* — descartada como padrão: TTQ zerado não anuncia qVSDC e cartões Visa podem recusar; mantida como comportamento para tags desconhecidas.
+
+**Consequências:** primeiro ponto a revisar se um cartão real responder `6985`/`6984` ao GPO — o diagnóstico mostra o comando GPO completo (só dados do terminal, sem dado do cartão) para conferência no emvlab.
+
+---
+
+## D014 — Seleção de aplicação: prioridade e fallback  (2026-11-21 · F3 · #11, #13)
+
+**Contexto:** RN-13 manda selecionar "a primeira" aplicação suportada do PPSE; RN-15 manda tentar AIDs conhecidos quando o PPSE responde `6A82`.
+
+**Decisão:** entre as aplicações suportadas, vale o *Application Priority Indicator* (tag 87, nibble baixo; ausente = menor prioridade) e, no empate, a ordem do diretório. Se o SELECT de uma candidata falhar, tenta a próxima. Fallback (`6A82`): `A0000000031010`, `A0000000032010` (Visa Electron), `A0000000041010`, `A0000000043060` (Maestro) — todos mapeados por RID para Visa/Mastercard (RN-20). PPSE `9000` sem entradas `61` → `PARSE_ERROR`; PPSE com outro SW → `PROTOCOL_ERROR`.
+
+**Alternativas:**
+- *Primeira na ordem do diretório, ignorando a 87* — descartada: contraria o EMV Book B quando o emissor declara prioridade; para cartões com uma só aplicação o resultado é idêntico.
+
+**Consequências:** divergência registrada em relação à leitura literal de RN-13 (mais aderente ao EMV). Cartões co-branded (ex.: Elo + Mastercard) escolhem a aplicação suportada.
+
+---
+
+## D015 — Extração: fallbacks além da especificação e validação  (2026-11-21 · F4 · #16)
+
+**Contexto:** RN-18/19 preveem 5A → 57 e 5F24 → 57. Cartões Mastercard em modo contactless podem trazer o Track 2 em `9F6B`; cartões Visa qVSDC costumam trazer o Track 2 (57) já na resposta do GPO, sem registros.
+
+**Decisão:** buscar em GPO + registros; PAN: 5A → 57 → 9F6B; validade: 5F24 → 57/9F6B. PAN validado (12–19 dígitos, Luhn) e validade validada (mês 01–12): falha vira `PARSE_ERROR` (recuperável), ausência vira `INCOMPLETE_DATA` (RN-21). O resultado atravessa a ponte como JSON e é revalidado no TS (`parseCardRead`) antes de chegar à máquina de estados (INV-4).
+
+**Consequências:** leitura corrompida por afastamento parcial é rejeitada em vez de devolver PAN errado. Track 2 presente mas sem separador/validade também é `PARSE_ERROR` (recuperável), salvo quando 5A e 5F24 já bastam.
+
+**RN-26 (zeragem):** ao fim de toda leitura (sucesso ou falha), o orquestrador sobrescreve com zero todas as respostas brutas recebidas, os buffers montados por `GET RESPONSE` e o valor e cabeçalho de **todos** os TLVs decodificados (`Tlv.wipe()`, recursivo). Limitação: o PAN e a validade viram `String` (JVM) e depois `string` (JS) para chegar ao integrador; strings são imutáveis e ficam a cargo do coletor de lixo. `CardReadResult` e `ExtractedCardData` sobrescrevem `toString()` para nunca imprimir o PAN.
+
+---
+
+## D016 — Tratamento de 61xx/6Cxx e mascaramento do diagnóstico  (2026-11-21 · F3/F4 · #10, #23)
+
+**Decisão:**
+- ISO 7816-4: `6Cxx` → reenvia com `Le = xx`; `61xx` → `GET RESPONSE` até 16 vezes, concatenando os dados. Raro em ISO-DEP (T=CL), mas barato e evita falha espúria.
+- Diagnóstico por **allowlist** (`EmvTags.DIAGNOSTIC_CLEAR`): comandos saem em claro (só dados do terminal e AIDs públicos); nas respostas, a estrutura (tag + comprimento) é sempre exibida, objetos construídos são percorridos, e o valor de um objeto primitivo só aparece se a tag estiver na allowlist (diretório, AIP, AFL, PDOL/CDOL, validade, ATC, CVM list etc.). Todo o resto vira `**` por byte — inclusive tags que o SDK não conhece. Resposta que não é TLV válido aparece só como tamanho. O criptograma aparece apenas como `cryptogramPresent: true/false` (RN-27).
+- Mensagens de erro do parser citam só posições (offset), nunca bytes lidos: num parse desalinhado, "tag" e "comprimento" seriam dígitos do PAN.
+
+**Alternativas:**
+- *Denylist das tags sensíveis* (primeira versão) — descartada na revisão do Tech Lead: o certificado da chave pública do ICC (`9F46`, presente em cartões com DDA/CDA) contém o PAN recuperável com a chave pública da CA, que é pública. Qualquer tag esquecida na denylist vaza; na allowlist, esquecer uma tag só esconde informação.
+
+**Referências:** OWASP Mobile Top 10 (2024) M6 — controles de privacidade inadequados e M9 — armazenamento inseguro; PCI DSS v4.0 req. 3.4.1 — exibição do PAN mascarada, no máximo BIN (6) + últimos 4 dígitos, que é o formato de `panMasked`.
+
+**Consequências:** a tela de diagnóstico pode ser mostrada à banca e exportada sem expor dados do portador; ainda permite conferir estrutura e SW de cada etapa no emvlab.
+
+---
+
+## D017 — Contrato de sessão nativa e seleção robusta  (2026-11-21 · F2–F4 · #9, #13, #14)
+
+**Contexto:** a revisão apontou três comportamentos que precisam de contrato explícito antes da máquina de estados (F5): cartão que sai e volta durante a leitura, cancelamento no meio do diálogo e respostas de GPO que significam "use outra aplicação".
+
+**Decisão:**
+- **Unidade atômica = cada APDU.** `cancelRead` é verificado antes de cada comando; uma troca nunca é interrompida. Consequência: a leitura pode terminar com sucesso depois do pedido de cancelamento, e a máquina de estados trata isso como CANCELLED (RN-10).
+- **Tag pendente.** O reader mode continua ligado durante a leitura; `onTagDetected` pode chegar em READING. O nativo guarda sempre a tag mais recente; a máquina de estados registra a detecção e, se a leitura em curso falhar de forma recuperável, lê de novo sem exigir nova aproximação.
+- **Não desligar o reader mode durante a leitura** (`stopReaderMode` derruba o IsoDep → `CARD_REMOVED` falso); só nos estados terminais.
+- **GPO `6984`/`6985`/`6986`** → descarta a aplicação e tenta a próxima candidata (Entry Point, Book B). Todas recusadas → `PROTOCOL_ERROR`.
+- **PPSE `6D00`/`6E00`/`6A81`** → `UNSUPPORTED_BRAND`: cartão ISO-DEP que não é de pagamento (crachá, transporte), sem gastar retentativas.
+- **PDOL > 252 bytes** → `PARSE_ERROR`; de 128 a 252 bytes, template `83 81 xx` (BER longo).
+- **`readCard`** valida os parâmetros do terminal antes de tocar no rádio, garante resolução única da Promise em qualquer caminho (inclusive módulo invalidado e `Throwable`), e rejeita leitura concorrente com detail `READ_IN_PROGRESS`.
+- A permissão `VIBRATE` sai do manifesto até a F6, que é quem a usa.
+
+**Consequências:** o contrato está documentado em `src/NativeCashtap.ts` e é a base dos testes da máquina de estados.
+
+---
+
 # Divergências spec EMV × cartão real
 
 | Data | Cartão | Esperado pela spec | Observado | Hex |

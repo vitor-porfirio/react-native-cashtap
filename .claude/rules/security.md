@@ -13,7 +13,9 @@ Implementa RN-22 a RN-27 e a seção 2.3 do TCC.
 ## Obrigatório
 
 - **Mascaramento na origem:** o dado é mascarado no ponto em que é produzido para log/evento/diagnóstico, não no ponto de escrita. Formato `123456******7890` (6 primeiros + 4 últimos) — RN-24.
-- **Tags sensíveis** nunca saem em claro de `emv/` exceto no resultado final: `5A` (PAN), `57` (Track 2), `56` (Track 1), `9F6B` (Track 2 MC), `5F20` (nome), `9F1F` (Track 1 discricionário), `9F26` (criptograma), `9F10` (IAD). APDUs de diagnóstico substituem o valor dessas tags por `*`.
+- **Allowlist no diagnóstico** (D016): só tags primitivas listadas em `EmvTags.DIAGNOSTIC_CLEAR` aparecem em claro; todo o resto (inclusive tags desconhecidas) vira `**`. Nunca trocar por denylist. Tags sabidamente sensíveis (`EmvTags.SENSITIVE`: 5A, 57, 56, 9F6B, 5F20, 9F1F, 9F26, 9F10, 9F46, 9F47, 9F48, 9F4B, 9F24) jamais entram na allowlist — há teste garantindo.
+- Mensagens de erro de parsing citam só offsets, nunca bytes lidos do cartão.
+- `data class` com PAN sobrescreve `toString()` com a versão mascarada.
 - O PAN completo aparece **uma única vez**, no objeto de resultado de sucesso, sempre acompanhado de `panMasked`.
 - Buffers com dado sensível (`ByteArray`, `CharArray`) são sobrescritos com zero após montar o resultado — RN-26, "na medida em que a plataforma permitir" (strings JVM/JS são imutáveis: documentar a limitação).
 - Erros carregam `detail` técnico **sem** dado sensível.
