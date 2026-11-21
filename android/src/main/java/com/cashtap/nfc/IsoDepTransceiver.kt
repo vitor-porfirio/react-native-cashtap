@@ -25,6 +25,8 @@ class IsoDepTransceiver(
     } catch (e: SecurityException) {
       // Tag já descartada pelo sistema (cartão saiu antes da conexão).
       throw LinkLostException(e)
+    } catch (e: IllegalStateException) {
+      throw LinkLostException(e)
     }
   }
 
@@ -36,6 +38,9 @@ class IsoDepTransceiver(
     throw LinkLostException(e)
   } catch (e: IllegalStateException) {
     // transceive após close/desconexão.
+    throw LinkLostException(e)
+  } catch (e: SecurityException) {
+    // "Tag is out of date": o sistema já descartou a tag.
     throw LinkLostException(e)
   }
 

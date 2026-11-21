@@ -8,6 +8,8 @@ package com.cashtap.emv
 class FakeTransceiver : Transceiver {
   private val rules = mutableListOf<Pair<(String) -> Boolean, String>>()
   val sent = mutableListOf<String>()
+  /** Arrays devolvidos ao orquestrador, para verificar a zeragem (RN-26). */
+  val returned = mutableListOf<ByteArray>()
   var loseLinkOnCall: Int? = null
 
   fun on(command: CommandApdu, response: String) = apply {
@@ -24,7 +26,7 @@ class FakeTransceiver : Transceiver {
     sent += hex
     if (loseLinkOnCall == sent.size) throw LinkLostException()
     val response = rules.lastOrNull { it.first(hex) }?.second ?: "6A82"
-    return response.hexToBytes()
+    return response.hexToBytes().also { returned += it }
   }
 
   companion object {

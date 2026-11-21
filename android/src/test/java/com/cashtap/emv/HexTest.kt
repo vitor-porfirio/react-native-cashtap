@@ -31,6 +31,11 @@ class HexTest {
     "9G".hexToBytes()
   }
 
+  @Test(expected = IllegalArgumentException::class)
+  fun `rejeita dígito não ASCII que Character digit aceitaria`() {
+    "\u0663\u0663".hexToBytes() // dígito árabe-índico
+  }
+
   @Test
   fun `array vazio vira string vazia`() {
     assertEquals("", ByteArray(0).toHex())

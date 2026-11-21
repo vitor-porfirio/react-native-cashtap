@@ -71,6 +71,24 @@ class PdolBuilderTest {
   }
 
   @Test
+  fun `D013 - valores fixos de terminal`() {
+    val hex = builder().build(
+      listOf(
+        DolEntry(EmvTags.TERMINAL_TYPE, 1),
+        DolEntry(EmvTags.TERMINAL_CAPABILITIES, 3),
+        DolEntry(EmvTags.ADDITIONAL_TERMINAL_CAPABILITIES, 5),
+        DolEntry(EmvTags.MERCHANT_NAME_LOCATION, 8),
+      )
+    ).toHex()
+    assertEquals("22" + "E0F0C8" + "6000F0A001" + Fixtures.ascii("CashTap") + "00", hex)
+  }
+
+  @Test
+  fun `9F35 é numérico - completado à esquerda`() {
+    assertEquals("0022", builder().build(listOf(DolEntry(EmvTags.TERMINAL_TYPE, 2))).toHex())
+  }
+
+  @Test
   fun `hora da transação em BCD`() {
     assertEquals("134509", builder().build(listOf(DolEntry(EmvTags.TRANSACTION_TIME, 3))).toHex())
   }

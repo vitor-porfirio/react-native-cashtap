@@ -5,23 +5,33 @@ data class ExtractedCardData(
   val pan: String,
   val expiry: String,
   val panSequenceNumber: String?,
-)
+) {
+  /** Nunca imprime o PAN (RN-23): um `"$card"` num log não vaza o número. */
+  override fun toString() = "ExtractedCardData(pan=${Masking.maskPan(pan)}, expiry=$expiry)"
+}
 
 /**
  * Extrai PAN e validade dos TLVs coletados no diálogo (GPO + registros).
  * - PAN: 5A; na ausência, Track 2 (57, ou 9F6B em cartões Mastercard), dígitos antes do `D` (RN-18).
  * - Validade: 5F24 (AAMMDD → AAMM); na ausência, 4 dígitos após o `D` do Track 2 (RN-19).
  * - Sem PAN ou validade: INCOMPLETE_DATA, nunca sucesso parcial (RN-21, INV-4).
+ * - Dado presente mas corrompido (BCD inválido, Track 2 sem separador, Luhn): PARSE_ERROR,
+ *   recuperável — típico de leitura com o cartão saindo do campo (D015).
  */
 object CardDataExtractor {
   private const val TRACK2_SEPARATOR = 'D'
 
   fun extract(tlvs: List<Tlv>): ExtractedCardData {
-    val track2 = (tlvs.find(EmvTags.TRACK2_EQUIVALENT) ?: tlvs.find(EmvTags.TRACK2_MASTERCARD))
-      ?.let { parseTrack2(it.value) }
+    val track2Tlv = tlvs.find(EmvTags.TRACK2_EQUIVALENT) ?: tlvs.find(EmvTags.TRACK2_MASTERCARD)
+    val track2 = track2Tlv?.let { parseTrack2(it.value) }
+    val pan5A = tlvs.find(EmvTags.PAN)
+    val expiry5F24 = tlvs.find(EmvTags.EXPIRY_DATE)
+    if (track2Tlv != null && track2 == null && (pan5A == null || expiry5F24 == null)) {
+      throw EmvException(EmvError.PARSE_ERROR, "Track 2 sem separador ou validade")
+    }
 
-    val pan = tlvs.find(EmvTags.PAN)?.let { bcdDigits(it.value, "PAN (5A)") } ?: track2?.first
-    val expiry = tlvs.find(EmvTags.EXPIRY_DATE)?.let { expiryFrom5F24(it.value) } ?: track2?.second
+    val pan = pan5A?.let { bcdDigits(it.value, "PAN (5A)") } ?: track2?.first
+    val expiry = expiry5F24?.let { expiryFrom5F24(it.value) } ?: track2?.second
 
     if (pan == null || expiry == null) {
       val missing = listOfNotNull("PAN".takeIf { pan == null }, "validade".takeIf { expiry == null })
@@ -51,11 +61,8 @@ object CardDataExtractor {
   private fun parseTrack2(value: ByteArray): Pair<String, String>? {
     val hex = value.toHex()
     val separator = hex.indexOf(TRACK2_SEPARATOR)
-    if (separator <= 0 || separator + 4 >= hex.length + 1) return null
-    val pan = hex.substring(0, separator)
-    val expiry = hex.substring(separator + 1, (separator + 5).coerceAtMost(hex.length))
-    if (expiry.length != 4) return null
-    return pan to expiry
+    if (separator <= 0 || hex.length < separator + 5) return null
+    return hex.substring(0, separator) to hex.substring(separator + 1, separator + 5)
   }
 
   /** BCD; dígitos ímpares vêm completados com F, que é removido (E4-H2). */

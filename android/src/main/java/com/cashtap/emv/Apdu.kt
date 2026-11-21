@@ -75,10 +75,21 @@ object Commands {
 
   fun selectByName(name: ByteArray) = CommandApdu(0x00, 0xA4, 0x04, 0x00, name, le = 0x00)
 
-  /** RN-16: dados do PDOL encapsulados na tag 83; sem PDOL vai `83 00`. */
+  /** Maior PDOL que cabe em APDU curto: 255 − `83 81 xx`. */
+  const val MAX_PDOL_DATA = 252
+
+  /**
+   * RN-16: dados do PDOL encapsulados na tag 83; sem PDOL vai `83 00`.
+   * Comprimento BER: forma curta até 127 bytes, `81 xx` acima disso.
+   */
   fun getProcessingOptions(pdolData: ByteArray): CommandApdu {
-    require(pdolData.size <= 253) { "dados do PDOL excedem APDU curto: ${pdolData.size} bytes" }
-    val template = byteArrayOf(0x83.toByte(), pdolData.size.toByte()) + pdolData
+    require(pdolData.size <= MAX_PDOL_DATA) { "dados do PDOL excedem APDU curto: ${pdolData.size} bytes" }
+    val length = if (pdolData.size < 0x80) {
+      byteArrayOf(pdolData.size.toByte())
+    } else {
+      byteArrayOf(0x81.toByte(), pdolData.size.toByte())
+    }
+    val template = byteArrayOf(0x83.toByte()) + length + pdolData
     return CommandApdu(0x80, 0xA8, 0x00, 0x00, template, le = 0x00)
   }
 

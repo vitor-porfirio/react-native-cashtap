@@ -103,8 +103,8 @@ function toFailure<C extends string>(
   codes: readonly C[],
   fallback: C
 ): NativeFailure<C> {
-  const code = (error as { code?: unknown } | null)?.code;
-  const message = (error as { message?: unknown } | null)?.message;
+  const code = isObject(error) ? error.code : undefined;
+  const message = isObject(error) ? error.message : undefined;
   return {
     ok: false,
     code: includes(codes, code) ? code : fallback,
@@ -173,6 +173,45 @@ function optionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === 'string';
 }
 
+/** 6 primeiros + `*` + 4 últimos (RN-24), conferido contra o próprio PAN. */
+function isMaskOf(masked: string, pan: string): boolean {
+  if (masked.length !== pan.length || pan.length < 11) return false;
+  const middle = masked.slice(6, -4);
+  return (
+    masked.slice(0, 6) === pan.slice(0, 6) &&
+    masked.slice(-4) === pan.slice(-4) &&
+    /^\*+$/.test(middle)
+  );
+}
+
+function isDuration(value: unknown): value is number {
+  return typeof value === 'number' && value >= 0;
+}
+
+function readStepDurations(value: unknown): Record<EmvStep, number> | null {
+  if (!isObject(value)) return null;
+  const {
+    SELECT_PPSE: ppse,
+    SELECT_AID: aid,
+    GET_PROCESSING_OPTIONS: gpo,
+    READ_RECORD: read,
+  } = value;
+  if (
+    !isDuration(ppse) ||
+    !isDuration(aid) ||
+    !isDuration(gpo) ||
+    !isDuration(read)
+  ) {
+    return null;
+  }
+  return {
+    SELECT_PPSE: ppse,
+    SELECT_AID: aid,
+    GET_PROCESSING_OPTIONS: gpo,
+    READ_RECORD: read,
+  };
+}
+
 /** INV-4 começa aqui: nada sem PAN e validade bem formados chega à máquina de estados. */
 export function parseCardRead(json: string): NativeCardRead | null {
   let data: unknown;
@@ -182,27 +221,31 @@ export function parseCardRead(json: string): NativeCardRead | null {
     return null;
   }
   if (!isObject(data)) return null;
-  const { pan, panMasked, expiry, brand, aid, stepDurationsMs } = data;
+  const {
+    pan,
+    panMasked,
+    expiry,
+    brand,
+    aid,
+    applicationLabel,
+    panSequenceNumber,
+    cryptogramPresent,
+  } = data;
+  const stepDurationsMs = readStepDurations(data.stepDurationsMs);
   if (
     typeof pan !== 'string' ||
     !/^\d{12,19}$/.test(pan) ||
     typeof panMasked !== 'string' ||
-    panMasked.length !== pan.length ||
-    !panMasked.includes('*') ||
+    !isMaskOf(panMasked, pan) ||
     typeof expiry !== 'string' ||
     !/^\d{2}(0[1-9]|1[0-2])$/.test(expiry) ||
     !includes(CARD_BRANDS, brand) ||
     typeof aid !== 'string' ||
     !/^[0-9A-F]{10,32}$/.test(aid) ||
-    !optionalString(data.applicationLabel) ||
-    !optionalString(data.panSequenceNumber) ||
-    typeof data.cryptogramPresent !== 'boolean' ||
-    !isObject(stepDurationsMs) ||
-    !EMV_STEPS.every(
-      (step) =>
-        typeof stepDurationsMs[step] === 'number' &&
-        (stepDurationsMs[step] as number) >= 0
-    )
+    !optionalString(applicationLabel) ||
+    !optionalString(panSequenceNumber) ||
+    typeof cryptogramPresent !== 'boolean' ||
+    !stepDurationsMs
   ) {
     return null;
   }
@@ -212,10 +255,10 @@ export function parseCardRead(json: string): NativeCardRead | null {
     expiry,
     brand,
     aid,
-    applicationLabel: data.applicationLabel as string | undefined,
-    panSequenceNumber: data.panSequenceNumber as string | undefined,
-    cryptogramPresent: data.cryptogramPresent,
-    stepDurationsMs: stepDurationsMs as Record<EmvStep, number>,
+    ...(applicationLabel !== undefined && { applicationLabel }),
+    ...(panSequenceNumber !== undefined && { panSequenceNumber }),
+    cryptogramPresent,
+    stepDurationsMs,
   };
 }
 

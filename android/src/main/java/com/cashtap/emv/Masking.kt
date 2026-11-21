@@ -14,9 +14,10 @@ object Masking {
   }
 
   /**
-   * Hex da resposta do cartão com o valor das tags sensíveis substituído por `**`
-   * em cada byte. Se a resposta não for TLV válido, nada é exibido além do tamanho:
-   * sem estrutura não há como garantir que o conteúdo não é sensível.
+   * Hex da resposta do cartão para o diagnóstico. Estrutura (tag + comprimento) sempre
+   * visível; valor primitivo em claro só se a tag estiver em [EmvTags.DIAGNOSTIC_CLEAR],
+   * senão `**` por byte. Resposta que não é TLV válido aparece só como tamanho: sem
+   * estrutura não há como garantir que o conteúdo não é sensível.
    */
   fun maskResponseData(data: ByteArray): String {
     if (data.isEmpty()) return ""
@@ -31,9 +32,9 @@ object Masking {
   private fun render(tlv: Tlv, out: StringBuilder) {
     out.append(tlv.header.toHex())
     when {
-      tlv.tag in EmvTags.SENSITIVE -> repeat(tlv.value.size) { out.append(MASK_BYTE) }
       tlv.isConstructed -> tlv.children.forEach { render(it, out) }
-      else -> out.append(tlv.value.toHex())
+      tlv.tag in EmvTags.DIAGNOSTIC_CLEAR -> out.append(tlv.value.toHex())
+      else -> repeat(tlv.value.size) { out.append(MASK_BYTE) }
     }
   }
 }

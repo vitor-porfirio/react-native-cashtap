@@ -48,6 +48,24 @@ class ApduTest {
   }
 
   @Test
+  fun `PDOL de 128 bytes ou mais usa comprimento BER longo 81 xx`() {
+    val data = ByteArray(130) { 0x11 }
+    val hex = Commands.getProcessingOptions(data).toBytes().toHex()
+    assertTrue(hex.startsWith("80A80000" + "85" + "838182"))
+    assertEquals(4 + 1 + 3 + 130 + 1, hex.length / 2)
+  }
+
+  @Test
+  fun `PDOL de 127 bytes ainda usa a forma curta`() {
+    assertTrue(Commands.getProcessingOptions(ByteArray(127)).toBytes().toHex().startsWith("80A8000081837F"))
+  }
+
+  @Test(expected = IllegalArgumentException::class)
+  fun `PDOL acima de 252 bytes não cabe em APDU curto`() {
+    Commands.getProcessingOptions(ByteArray(253))
+  }
+
+  @Test
   fun `E3-H5 - READ RECORD usa P2 = (SFI shl 3) or 4`() {
     assertEquals("00B2010C00", Commands.readRecord(sfi = 1, record = 1).toBytes().toHex())
     assertEquals("00B2031400", Commands.readRecord(sfi = 2, record = 3).toBytes().toHex())
@@ -60,8 +78,8 @@ class ApduTest {
 
   @Test
   fun `resposta separa dados e status word`() {
-    val response = ResponseApdu("6F0184029000".hexToBytes())
-    assertArrayEquals("6F018402".hexToBytes(), response.data)
+    val response = ResponseApdu("6F02840F9000".hexToBytes())
+    assertArrayEquals("6F02840F".hexToBytes(), response.data)
     assertEquals(0x90, response.sw1)
     assertEquals(0x00, response.sw2)
     assertTrue(response.isSuccess)

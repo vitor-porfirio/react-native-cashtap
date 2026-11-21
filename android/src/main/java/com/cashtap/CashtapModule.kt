@@ -2,6 +2,7 @@ package com.cashtap
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.nfc.Tag
 import android.nfc.tech.IsoDep
 import android.os.SystemClock
 import android.provider.Settings
@@ -23,6 +24,7 @@ import com.facebook.react.bridge.ReactApplicationContext
 import org.json.JSONObject
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -70,32 +72,59 @@ class CashtapModule(reactContext: ReactApplicationContext) :
   }
 
   override fun readCard(amountCents: Double, currencyCode: String, diagnostics: Boolean, promise: Promise) {
+    // Valida antes de tocar no rádio.
+    val terminal = try {
+      TerminalData(amountCents = amountCents.toLong(), currencyCode = currencyCode)
+    } catch (e: IllegalArgumentException) {
+      promise.reject(EmvError.UNKNOWN.name, "parâmetros de terminal inválidos: ${e.message}")
+      return
+    }
     if (!reading.compareAndSet(false, true)) {
-      promise.reject(EmvError.UNKNOWN.name, "leitura já em andamento")
+      promise.reject(EmvError.UNKNOWN.name, "READ_IN_PROGRESS: leitura anterior ainda em andamento")
       return
     }
     cancelRequested.set(false)
     val tag = session.takeTag()
-    ioExecutor.execute {
-      try {
-        promise.resolve(read(tag, amountCents.toLong(), currencyCode, diagnostics))
-      } catch (e: EmvException) {
-        AndroidLogger.debug("leitura falhou: ${e.error} (${e.detail})")
-        promise.reject(e.error.name, e.detail)
-      } catch (e: Exception) {
-        AndroidLogger.warn("falha inesperada na leitura: ${e.javaClass.simpleName}")
-        promise.reject(EmvError.UNKNOWN.name, e.javaClass.simpleName)
-      } finally {
-        reading.set(false)
-      }
+    try {
+      ioExecutor.execute { runRead(tag, terminal, diagnostics, promise) }
+    } catch (e: RejectedExecutionException) {
+      // Módulo já invalidado (reload/encerramento): nunca deixar a Promise pendente.
+      reading.set(false)
+      promise.reject(EmvError.UNKNOWN.name, "módulo encerrado")
     }
+  }
+
+  /** Resolve ou rejeita a Promise exatamente uma vez, em qualquer caminho (INV-3). */
+  private fun runRead(tag: Tag?, terminal: TerminalData, diagnostics: Boolean, promise: Promise) {
+    val outcome: Result<String> = try {
+      Result.success(read(tag, terminal, diagnostics))
+    } catch (t: Throwable) {
+      Result.failure(t)
+    }
+    // Libera antes de responder: o JS pode pedir a próxima leitura imediatamente.
+    reading.set(false)
+    outcome.fold(
+      onSuccess = promise::resolve,
+      onFailure = { error ->
+        when (error) {
+          is EmvException -> {
+            AndroidLogger.debug("leitura falhou: ${error.error} (${error.detail})")
+            promise.reject(error.error.name, error.detail)
+          }
+          else -> {
+            AndroidLogger.warn("falha inesperada na leitura: ${error.javaClass.simpleName}")
+            promise.reject(EmvError.UNKNOWN.name, error.javaClass.simpleName)
+          }
+        }
+      },
+    )
   }
 
   override fun cancelRead() {
     cancelRequested.set(true)
   }
 
-  private fun read(tag: android.nfc.Tag?, amountCents: Long, currencyCode: String, diagnostics: Boolean): String {
+  private fun read(tag: Tag?, terminal: TerminalData, diagnostics: Boolean): String {
     tag ?: throw EmvException(EmvError.CARD_REMOVED, "nenhum cartão no campo")
     // E2-H3: tag sem ISO-DEP não é cartão de pagamento suportado.
     val isoDep = IsoDep.get(tag) ?: throw EmvException(EmvError.UNSUPPORTED_BRAND, "tag sem suporte a ISO-DEP")
@@ -105,11 +134,6 @@ class CashtapModule(reactContext: ReactApplicationContext) :
         transceiver.connect()
       } catch (e: LinkLostException) {
         throw EmvException(EmvError.CARD_REMOVED, "cartão saiu antes da conexão", e)
-      }
-      val terminal = try {
-        TerminalData(amountCents = amountCents, currencyCode = currencyCode.padStart(4, '0'))
-      } catch (e: IllegalArgumentException) {
-        throw EmvException(EmvError.UNKNOWN, "parâmetros de terminal inválidos: ${e.message}")
       }
       val result = EmvOrchestrator(
         transceiver = transceiver,

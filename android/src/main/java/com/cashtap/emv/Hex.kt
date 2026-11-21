@@ -19,12 +19,19 @@ object Hex {
     val clean = hex.filterNot { it.isWhitespace() }
     require(clean.length % 2 == 0) { "hex com número ímpar de dígitos: ${clean.length}" }
     return ByteArray(clean.length / 2) { index ->
-      val high = Character.digit(clean[index * 2], 16)
-      val low = Character.digit(clean[index * 2 + 1], 16)
+      val high = hexValue(clean[index * 2])
+      val low = hexValue(clean[index * 2 + 1])
       require(high >= 0 && low >= 0) { "caractere não hexadecimal na posição ${index * 2}" }
       ((high shl 4) or low).toByte()
     }
   }
+}
+
+private fun hexValue(char: Char): Int = when (char) {
+  in '0'..'9' -> char - '0'
+  in 'A'..'F' -> char - 'A' + 10
+  in 'a'..'f' -> char - 'a' + 10
+  else -> -1
 }
 
 fun ByteArray.toHex(): String = Hex.encode(this)

@@ -32,15 +32,18 @@ data class CardReadResult(
   val panSequenceNumber: String?,
   val cryptogramPresent: Boolean,
   val stepDurationsMs: Map<EmvStep, Double>,
-)
+) {
+  /** Nunca imprime o PAN (RN-23). */
+  override fun toString() = "CardReadResult(pan=$panMasked, brand=$brand, aid=$aid)"
+}
 
 /**
  * Conduz o diálogo EMV com o cartão no campo:
  * SELECT PPSE → SELECT AID → GET PROCESSING OPTIONS → READ RECORD (RN-12..RN-21).
  *
- * Operação atômica e sem memória de fluxo: timeout, retentativa e mensagens
- * ficam na máquina de estados do TS (especificação §2.3). O cancelamento é
- * verificado entre comandos, para nunca interromper uma troca no meio (RN-10).
+ * Operação sem memória de fluxo: timeout, retentativa e mensagens ficam na máquina
+ * de estados do TS (especificação §2.3). A unidade atômica é cada APDU: o
+ * cancelamento é verificado antes de cada comando, nunca no meio de uma troca (RN-10, D017).
  */
 class EmvOrchestrator(
   private val transceiver: Transceiver,
@@ -53,7 +56,10 @@ class EmvOrchestrator(
 ) {
   private val pdolBuilder = pdolBuilder ?: PdolBuilder(terminal, clock)
   private val durations = linkedMapOf<EmvStep, Double>()
-  private val sensitiveBuffers = mutableListOf<ByteArray>()
+
+  /** RN-26: todo buffer e TLV com bytes do cartão, sobrescritos ao final da leitura. */
+  private val rawBuffers = mutableListOf<ByteArray>()
+  private val parsedTlvs = mutableListOf<Tlv>()
 
   private class Candidate(val aid: ByteArray, val label: String?, val priority: Int)
 
@@ -62,13 +68,10 @@ class EmvOrchestrator(
   fun read(): CardReadResult {
     durations.clear()
     try {
-      val application = selectApplication()
+      val (application, gpoTlvs) = selectAndInitiate()
       val brand = AidRegistry.brandOf(application.aid)
-        ?: throw EmvException(EmvError.UNSUPPORTED_BRAND, "AID ${application.aid.toHex()} fora do registro")
-
-      val gpoTlvs = getProcessingOptions(application.pdol)
-      val recordTlvs = readRecords(gpoTlvs)
-      val allTlvs = gpoTlvs + recordTlvs
+        ?: throw EmvException(EmvError.UNSUPPORTED_BRAND, "AID fora do registro")
+      val allTlvs = gpoTlvs + readRecords(gpoTlvs)
 
       val card = CardDataExtractor.extract(allTlvs)
       return CardReadResult(
@@ -83,47 +86,64 @@ class EmvOrchestrator(
         stepDurationsMs = EmvStep.values().associateWith { durations[it] ?: 0.0 },
       )
     } finally {
-      // RN-26: sobrescreve as respostas brutas que continham dados do cartão.
-      sensitiveBuffers.forEach { it.fill(0) }
-      sensitiveBuffers.clear()
+      // RN-26: strings JVM são imutáveis; os bytes, não.
+      rawBuffers.forEach { it.fill(0) }
+      rawBuffers.clear()
+      parsedTlvs.forEach(Tlv::wipe)
+      parsedTlvs.clear()
     }
   }
 
-  // ---- Etapas 1 e 2: PPSE e seleção da aplicação ----
+  // ---- Etapas 1 a 3: diretório, seleção e GET PROCESSING OPTIONS ----
 
-  private fun selectApplication(): SelectedApplication {
-    val ppse = exchange(EmvStep.SELECT_PPSE, Commands.selectByName(Commands.PPSE_NAME))
-
-    val candidates = when {
-      ppse.sw == ResponseApdu.SW_FILE_NOT_FOUND -> {
-        logger.debug("PPSE ausente (6A82): SELECT AID direto com AIDs conhecidos (RN-15)")
-        AidRegistry.FALLBACK_AIDS.map { Candidate(it, null, Int.MAX_VALUE) }
-      }
-      !ppse.isSuccess -> throw EmvException(EmvError.PROTOCOL_ERROR, "SELECT PPSE respondeu ${ppse.swHex}")
-      else -> supportedCandidatesFromPpse(ppse.data)
-    }
-
-    for (candidate in candidates) {
-      val response = exchange(EmvStep.SELECT_AID, Commands.selectByName(candidate.aid))
-      if (!response.isSuccess) {
-        logger.debug("SELECT AID ${candidate.aid.toHex()} respondeu ${response.swHex}")
+  /**
+   * Seleciona a aplicação e inicia a transação. Se o GPO responder 6984/6985/6986
+   * ("condições não satisfeitas"), a aplicação é descartada e a próxima candidata é
+   * tentada, como no Entry Point do EMV Book B.
+   */
+  private fun selectAndInitiate(): Pair<SelectedApplication, List<Tlv>> {
+    var lastGpoSw: String? = null
+    for (candidate in candidates()) {
+      val application = select(candidate) ?: continue
+      val response = getProcessingOptions(application.pdol)
+      if (response.sw in GPO_TRY_NEXT_APPLICATION) {
+        logger.debug("GPO ${response.swHex}: tentando a próxima aplicação")
+        lastGpoSw = response.swHex
         continue
       }
-      val fci = TlvParser.parse(response.data)
-      val aid = fci.find(EmvTags.DF_NAME)?.value?.takeIf { AidRegistry.brandOf(it) != null } ?: candidate.aid
-      val label = fci.find(EmvTags.APPLICATION_LABEL)?.value?.let(::ascii) ?: candidate.label
-      return SelectedApplication(aid, label, fci.find(EmvTags.PDOL)?.value)
+      if (!response.isSuccess) {
+        throw EmvException(EmvError.PROTOCOL_ERROR, "GPO respondeu ${response.swHex}")
+      }
+      return application to parseGpo(response.data)
+    }
+    if (lastGpoSw != null) {
+      throw EmvException(EmvError.PROTOCOL_ERROR, "GPO recusado por todas as aplicações ($lastGpoSw)")
     }
     throw EmvException(EmvError.UNSUPPORTED_BRAND, "nenhuma aplicação suportada aceitou o SELECT")
   }
 
+  private fun candidates(): List<Candidate> {
+    val ppse = exchange(EmvStep.SELECT_PPSE, Commands.selectByName(Commands.PPSE_NAME))
+    return when {
+      ppse.sw == ResponseApdu.SW_FILE_NOT_FOUND -> {
+        logger.debug("PPSE ausente (6A82): SELECT AID direto com AIDs conhecidos (RN-15)")
+        AidRegistry.FALLBACK_AIDS.map { Candidate(it, null, Int.MAX_VALUE) }
+      }
+      // Cartão ISO-DEP que não fala SELECT por nome: crachá, transporte etc.
+      ppse.sw in NOT_A_PAYMENT_CARD ->
+        throw EmvException(EmvError.UNSUPPORTED_BRAND, "PPSE respondeu ${ppse.swHex}")
+      !ppse.isSuccess -> throw EmvException(EmvError.PROTOCOL_ERROR, "SELECT PPSE respondeu ${ppse.swHex}")
+      else -> supportedCandidatesFromPpse(ppse.data)
+    }
+  }
+
   /**
-   * RN-13: só AIDs do registro. Entre eles, vale o indicador de prioridade (87, nibble
-   * baixo; 1 = maior prioridade; ausente = menor) e, no empate, a ordem do diretório.
+   * RN-13: só AIDs do registro. Entre eles vale o indicador de prioridade (87, nibble
+   * baixo; 1 = maior; ausente = menor) e, no empate, a ordem do diretório (D014).
    */
   private fun supportedCandidatesFromPpse(data: ByteArray): List<Candidate> {
-    val entries = TlvParser.parse(data).findAll(EmvTags.DIRECTORY_ENTRY).mapNotNull { entry ->
-      val aid = entry.find(EmvTags.AID)?.value ?: return@mapNotNull null
+    val entries = parse(data).findAll(EmvTags.DIRECTORY_ENTRY).mapNotNull { entry ->
+      val aid = entry.find(EmvTags.AID)?.value?.copyOf() ?: return@mapNotNull null
       val priority = entry.find(EmvTags.PRIORITY_INDICATOR)?.value?.firstOrNull()
         ?.let { (it.toInt() and 0x0F).takeIf { p -> p != 0 } } ?: Int.MAX_VALUE
       Candidate(aid, entry.find(EmvTags.APPLICATION_LABEL)?.value?.let(::ascii), priority)
@@ -141,19 +161,31 @@ class EmvOrchestrator(
     return supported
   }
 
-  // ---- Etapa 3: GET PROCESSING OPTIONS ----
-
-  private fun getProcessingOptions(pdol: ByteArray?): List<Tlv> {
-    val pdolData = pdol?.let { pdolBuilder.build(TlvParser.parseDol(it)) } ?: ByteArray(0)
-    val response = exchange(EmvStep.GET_PROCESSING_OPTIONS, Commands.getProcessingOptions(pdolData))
+  private fun select(candidate: Candidate): SelectedApplication? {
+    val response = exchange(EmvStep.SELECT_AID, Commands.selectByName(candidate.aid))
     if (!response.isSuccess) {
-      throw EmvException(EmvError.PROTOCOL_ERROR, "GPO respondeu ${response.swHex}")
+      logger.debug("SELECT AID ${candidate.aid.toHex()} respondeu ${response.swHex}")
+      return null
     }
-    sensitiveBuffers += response.data
-    val tlvs = TlvParser.parse(response.data)
-    val root = tlvs.firstOrNull()
-      ?: throw EmvException(EmvError.PARSE_ERROR, "GPO sem dados")
+    val fci = parse(response.data)
+    // Seleção parcial: o FCI informa o AID completo em 84.
+    val aid = fci.find(EmvTags.DF_NAME)?.value?.takeIf { AidRegistry.brandOf(it) != null }?.copyOf()
+      ?: candidate.aid
+    val label = fci.find(EmvTags.APPLICATION_LABEL)?.value?.let(::ascii) ?: candidate.label
+    return SelectedApplication(aid, label, fci.find(EmvTags.PDOL)?.value?.copyOf())
+  }
 
+  private fun getProcessingOptions(pdol: ByteArray?): ResponseApdu {
+    val pdolData = pdol?.let { pdolBuilder.build(TlvParser.parseDol(it)) } ?: ByteArray(0)
+    if (pdolData.size > Commands.MAX_PDOL_DATA) {
+      throw EmvException(EmvError.PARSE_ERROR, "PDOL pede ${pdolData.size} bytes; máximo ${Commands.MAX_PDOL_DATA}")
+    }
+    return exchange(EmvStep.GET_PROCESSING_OPTIONS, Commands.getProcessingOptions(pdolData))
+  }
+
+  private fun parseGpo(data: ByteArray): List<Tlv> {
+    val root = parse(data).firstOrNull()
+      ?: throw EmvException(EmvError.PARSE_ERROR, "GPO sem dados")
     return when (root.tag) {
       // Formato 1: AIP (2 bytes) seguido do AFL, sem tags internas.
       EmvTags.RESPONSE_FORMAT_1 -> {
@@ -161,11 +193,11 @@ class EmvOrchestrator(
         listOf(
           syntheticTlv(EmvTags.AIP, root.value.copyOfRange(0, 2)),
           syntheticTlv(EmvTags.AFL, root.value.copyOfRange(2, root.value.size)),
-        )
+        ).also(parsedTlvs::addAll)
       }
       // Formato 2: template 77 com AIP, AFL e, em qVSDC, já o Track 2 e o criptograma.
       EmvTags.RESPONSE_FORMAT_2 -> root.children
-      else -> throw EmvException(EmvError.PARSE_ERROR, "GPO com template inesperado ${tagHex(root.tag)}")
+      else -> throw EmvException(EmvError.PARSE_ERROR, "GPO com template inesperado")
     }
   }
 
@@ -181,9 +213,8 @@ class EmvOrchestrator(
         logger.warn("READ RECORD SFI ${location.sfi} registro ${location.record} respondeu ${response.swHex}")
         continue
       }
-      sensitiveBuffers += response.data
       try {
-        records += TlvParser.parse(response.data)
+        records += parse(response.data)
       } catch (e: EmvException) {
         logger.warn("registro SFI ${location.sfi}/${location.record} ignorado: ${e.detail}")
       }
@@ -197,21 +228,22 @@ class EmvOrchestrator(
     if (isCancelled()) throw EmvException(EmvError.CANCELLED_BY_USER, "cancelado antes de ${step.name}")
 
     val start = clock.monotonicNanos()
-    var current = command
-    var response = transmit(current)
+    var response = transmit(command)
+    var sent = command
     // ISO 7816-4: 6Cxx pede reenvio com Le = xx; 61xx indica bytes a buscar com GET RESPONSE.
     if (response.sw1 == ResponseApdu.SW1_WRONG_LE) {
-      current = current.withLe(response.sw2)
-      response = transmit(current)
+      sent = command.withLe(response.sw2)
+      response = transmit(sent)
     }
-    var data = response.data
-    var guard = 0
-    while (response.sw1 == ResponseApdu.SW1_BYTES_AVAILABLE && guard++ < 16) {
-      response = transmit(Commands.getResponse(response.sw2))
-      data += response.data
-    }
-    if (data.size != response.data.size) {
-      response = ResponseApdu(data + byteArrayOf(response.sw1.toByte(), response.sw2.toByte()))
+    if (response.sw1 == ResponseApdu.SW1_BYTES_AVAILABLE) {
+      var data = response.data
+      var guard = 0
+      while (response.sw1 == ResponseApdu.SW1_BYTES_AVAILABLE && guard++ < MAX_GET_RESPONSE) {
+        response = transmit(Commands.getResponse(response.sw2))
+        data = (data + response.data).also(rawBuffers::add)
+      }
+      val assembled = (data + byteArrayOf(response.sw1.toByte(), response.sw2.toByte())).also(rawBuffers::add)
+      response = ResponseApdu(assembled).also { rawBuffers += it.data }
     }
     val durationMs = (clock.monotonicNanos() - start) / 1_000_000.0
     durations[step] = (durations[step] ?: 0.0) + durationMs
@@ -219,7 +251,7 @@ class EmvOrchestrator(
     diagnostics?.onExchange(
       ApduExchange(
         step = step,
-        command = command.toBytes().toHex(),
+        command = sent.toBytes().toHex(),
         response = Masking.maskResponseData(response.data),
         sw = response.swHex,
         durationMs = durationMs,
@@ -235,11 +267,24 @@ class EmvOrchestrator(
     } catch (e: LinkLostException) {
       throw EmvException(EmvError.CARD_REMOVED, "cartão saiu do campo", e)
     }
-    return ResponseApdu(raw).also { sensitiveBuffers += raw }
+    rawBuffers += raw
+    return ResponseApdu(raw).also { rawBuffers += it.data }
   }
+
+  private fun parse(data: ByteArray): List<Tlv> = TlvParser.parse(data).also(parsedTlvs::addAll)
 
   private fun syntheticTlv(tag: Int, value: ByteArray) =
     Tlv(tag, byteArrayOf(tag.toByte(), value.size.toByte()), value, emptyList())
 
   private fun ascii(bytes: ByteArray) = String(bytes, Charsets.US_ASCII).trim()
+
+  companion object {
+    private const val MAX_GET_RESPONSE = 16
+
+    /** "Condições de uso não satisfeitas": tentar a próxima aplicação (Book B). */
+    private val GPO_TRY_NEXT_APPLICATION = setOf(0x6984, 0x6985, 0x6986)
+
+    /** INS/CLA não suportados ou função não suportada no SELECT do PPSE. */
+    private val NOT_A_PAYMENT_CARD = setOf(0x6D00, 0x6E00, 0x6A81)
+  }
 }

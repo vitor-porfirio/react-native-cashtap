@@ -87,8 +87,40 @@ class CardDataExtractorTest {
   }
 
   @Test
-  fun `Track 2 sem separador não fornece dados`() {
-    assertError(EmvError.INCOMPLETE_DATA, c("70", p("57", Fixtures.VISA_PAN)))
+  fun `D015 - Track 2 sem separador é PARSE_ERROR (corrompido, recuperável)`() {
+    assertError(EmvError.PARSE_ERROR, c("70", p("57", Fixtures.VISA_PAN)))
+  }
+
+  @Test
+  fun `Track 2 corrompido é irrelevante quando 5A e 5F24 existem`() {
+    val card = extract(c("70", p("57", Fixtures.VISA_PAN), p("5A", Fixtures.MASTERCARD_PAN), p("5F24", "251231")))
+    assertEquals(Fixtures.MASTERCARD_PAN, card.pan)
+  }
+
+  @Test
+  fun `RN-19 - 5F24 tem prioridade sobre a validade do Track 2`() {
+    val card = extract(c("70", p("57", "${Fixtures.VISA_PAN}D27082010000000F"), p("5F24", "251231")))
+    assertEquals("2512", card.expiry)
+  }
+
+  @Test
+  fun `D015 - Track 2 da tag 57 tem prioridade sobre o da 9F6B`() {
+    val card = extract(
+      c(
+        "70",
+        p("9F6B", "${Fixtures.MASTERCARD_PAN}D2512201000000000F"),
+        p("57", "${Fixtures.VISA_PAN}D27082010000000F"),
+      )
+    )
+    assertEquals(Fixtures.VISA_PAN, card.pan)
+    assertEquals("2708", card.expiry)
+  }
+
+  @Test
+  fun `RN-23 - toString não imprime o PAN`() {
+    val card = extract(c("70", p("5A", Fixtures.MASTERCARD_PAN), p("5F24", "251231")))
+    assertFalse(card.toString().contains(Fixtures.MASTERCARD_PAN))
+    assertTrue(card.toString().contains("541333******0434"))
   }
 
   @Test

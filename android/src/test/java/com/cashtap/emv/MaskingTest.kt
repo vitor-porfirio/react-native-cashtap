@@ -49,6 +49,38 @@ class MaskingTest {
   }
 
   @Test
+  fun `RN-23 - toda tag sensível conhecida sai mascarada, com o PAN dentro do valor`() {
+    for (tag in EmvTags.SENSITIVE) {
+      val value = Fixtures.VISA_PAN + "D2512" // PAN em BCD dentro do valor
+      val data = Fixtures.p(tagHex(tag), value + "0")
+      val masked = Masking.maskResponseData(data.hexToBytes())
+      assertFalse("tag ${tagHex(tag)} vazou o PAN", masked.contains(Fixtures.VISA_PAN))
+      assertTrue("tag ${tagHex(tag)} deveria ser mascarada", masked.contains("**"))
+    }
+  }
+
+  @Test
+  fun `RN-23 - Track 1 (56) em ASCII não vaza o PAN`() {
+    val track1 = Fixtures.ascii("B${Fixtures.VISA_PAN}^TESTE/CARTAO^2512201")
+    val masked = Masking.maskResponseData(Fixtures.c("70", Fixtures.p("56", track1)).hexToBytes())
+    assertFalse(masked.contains(Fixtures.ascii(Fixtures.VISA_PAN)))
+  }
+
+  @Test
+  fun `D016 - certificado do ICC (9F46) e tags desconhecidas são mascarados por padrão`() {
+    val masked = Masking.maskResponseData(
+      Fixtures.c("70", Fixtures.p("9F46", "AB".repeat(20)), Fixtures.p("DF8199", "CDCD")).hexToBytes()
+    )
+    assertFalse(masked.contains("ABAB"))
+    assertFalse(masked.contains("CDCD"))
+  }
+
+  @Test
+  fun `allowlist e denylist não se sobrepõem`() {
+    assertTrue(EmvTags.SENSITIVE.intersect(EmvTags.DIAGNOSTIC_CLEAR).isEmpty())
+  }
+
+  @Test
   fun `resposta que não é TLV não é exibida`() {
     val raw = "${Fixtures.VISA_PAN}FFFF".hexToBytes().copyOfRange(0, 7)
     val masked = Masking.maskResponseData(raw)

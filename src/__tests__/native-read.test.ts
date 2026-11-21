@@ -182,6 +182,8 @@ describe('fronteira nativa: sessão e leitura', () => {
       ['PAN com letras', { pan: '47617390010100AB' }],
       ['PAN curto', { pan: '41111' }],
       ['máscara igual ao PAN', { panMasked: TEST_PAN }],
+      ['máscara só de asteriscos', { panMasked: '*'.repeat(16) }],
+      ['máscara de outro PAN', { panMasked: '411111******1111' }],
       ['validade ausente', { expiry: undefined }],
       ['mês 13', { expiry: '2513' }],
       ['bandeira desconhecida', { brand: 'elo' }],
@@ -207,14 +209,23 @@ describe('fronteira nativa: sessão e leitura', () => {
       expect(parseCardRead('null')).toBeNull();
     });
 
-    it('aceita campos opcionais ausentes', () => {
+    it('aceita campos opcionais ausentes, sem criar chaves undefined', () => {
       const { applicationLabel, panSequenceNumber, ...minimal } = validRead;
       expect(applicationLabel).toBeDefined();
       expect(panSequenceNumber).toBeDefined();
-      expect(parseCardRead(JSON.stringify(minimal))).toMatchObject({
-        pan: TEST_PAN,
-        applicationLabel: undefined,
-      });
+      const parsed = parseCardRead(JSON.stringify(minimal));
+      expect(parsed).toMatchObject({ pan: TEST_PAN });
+      expect(parsed).not.toHaveProperty('applicationLabel');
+    });
+
+    it('descarta chaves extras nas durações', () => {
+      const parsed = parseCardRead(
+        JSON.stringify({
+          ...validRead,
+          stepDurationsMs: { ...validRead.stepDurationsMs, EXTRA: 1 },
+        })
+      );
+      expect(parsed?.stepDurationsMs).toEqual(validRead.stepDurationsMs);
     });
   });
 

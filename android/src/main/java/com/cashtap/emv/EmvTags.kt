@@ -48,7 +48,44 @@ object EmvTags {
   const val ADDITIONAL_TERMINAL_CAPABILITIES = 0x9F40
   const val MERCHANT_NAME_LOCATION = 0x9F4E
 
-  /** Valores que nunca saem em claro de logs ou diagnóstico (RN-23, RN-27). */
+  const val ICC_PUBLIC_KEY_CERTIFICATE = 0x9F46
+  const val ICC_PUBLIC_KEY_EXPONENT = 0x9F47
+  const val ICC_PUBLIC_KEY_REMAINDER = 0x9F48
+  const val SIGNED_DYNAMIC_APPLICATION_DATA = 0x9F4B
+  const val PAYMENT_ACCOUNT_REFERENCE = 0x9F24
+
+  /**
+   * Allowlist do diagnóstico (RN-23, D016): só estas tags **primitivas** aparecem
+   * em claro. Toda outra primitiva é mascarada — inclusive tags que o SDK não conhece.
+   * Denylist não serve: o certificado do ICC (9F46), por exemplo, carrega o PAN
+   * recuperável com chaves públicas.
+   */
+  val DIAGNOSTIC_CLEAR: Set<Int> = setOf(
+    DF_NAME, AID, APPLICATION_LABEL, PRIORITY_INDICATOR, PDOL,
+    0x9F12, // nome preferido da aplicação
+    0x5F2D, // preferência de idioma
+    0x9F11, // índice da tabela de caracteres
+    RESPONSE_FORMAT_1, AIP, AFL,
+    EXPIRY_DATE, PAN_SEQUENCE_NUMBER,
+    0x5F25, // data de início de validade
+    0x5F28, // país do emissor
+    0x9F07, // controle de uso da aplicação
+    0x9F08, // versão da aplicação
+    0x8C, 0x8D, // CDOL1, CDOL2
+    0x8E, // lista de CVM
+    0x9F0D, 0x9F0E, 0x9F0F, // IAC
+    0x9F42, // moeda da aplicação
+    0x9F36, // contador de transações (ATC)
+    0x9F27, // dado de informação do criptograma (CID)
+    0x9F6C, // CTQ
+    0x8F, // índice da chave pública da CA
+    0x9F4A, // lista de tags para SDA
+  )
+
+  /**
+   * Tags com dado do portador ou que permitem reconstruí-lo. Documentação e testes:
+   * nenhuma pode estar em [DIAGNOSTIC_CLEAR].
+   */
   val SENSITIVE: Set<Int> = setOf(
     PAN,
     TRACK2_EQUIVALENT,
@@ -58,6 +95,11 @@ object EmvTags {
     TRACK1_DISCRETIONARY,
     APPLICATION_CRYPTOGRAM,
     ISSUER_APPLICATION_DATA,
+    ICC_PUBLIC_KEY_CERTIFICATE,
+    ICC_PUBLIC_KEY_EXPONENT,
+    ICC_PUBLIC_KEY_REMAINDER,
+    SIGNED_DYNAMIC_APPLICATION_DATA,
+    PAYMENT_ACCOUNT_REFERENCE,
   )
 
   /** Formato numérico (n): preenchimento à esquerda com zeros (EMV Book 3, 5.4). */
@@ -69,5 +111,6 @@ object EmvTags {
     TRANSACTION_DATE,
     TRANSACTION_TYPE,
     TRANSACTION_TIME,
+    TERMINAL_TYPE,
   )
 }

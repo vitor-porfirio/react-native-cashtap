@@ -19,6 +19,13 @@ class Tlv(
   fun findAll(tag: Int): List<Tlv> =
     (if (this.tag == tag) listOf(this) else emptyList()) + children.findAll(tag)
 
+  /** RN-26: sobrescreve valor e cabeçalho deste elemento e de todos os filhos. */
+  fun wipe() {
+    value.fill(0)
+    header.fill(0)
+    children.forEach(Tlv::wipe)
+  }
+
   override fun toString(): String = "Tlv(${tagHex(tag)}, ${value.size} bytes)"
 }
 
@@ -39,6 +46,8 @@ data class DolEntry(val tag: Int, val length: Int)
  * - bit 6 do primeiro byte indica objeto construído, cujo valor é decodificado recursivamente;
  * - bytes 00 e FF entre objetos são preenchimento e são ignorados.
  * Entrada malformada lança [EmvException] com [EmvError.PARSE_ERROR], nunca outra exceção.
+ * As mensagens citam só posições (offset), nunca bytes lidos: num parse desalinhado,
+ * "tag" e "comprimento" podem ser dígitos do PAN (RN-23).
  */
 object TlvParser {
   private const val MAX_DEPTH = 16
@@ -52,7 +61,7 @@ object TlvParser {
     var offset = 0
     while (offset < bytes.size) {
       val (tag, afterTag) = readTag(bytes, offset, bytes.size)
-      if (afterTag >= bytes.size) fail("DOL truncado após a tag ${tagHex(tag)}")
+      if (afterTag >= bytes.size) fail("DOL truncado no offset $afterTag")
       entries += DolEntry(tag, bytes.u8(afterTag))
       offset = afterTag + 1
     }
@@ -70,9 +79,9 @@ object TlvParser {
         continue
       }
       val (tag, afterTag) = readTag(bytes, offset, end)
-      val (length, afterLength) = readLength(bytes, afterTag, end, tag)
+      val (length, afterLength) = readLength(bytes, afterTag, end)
       if (length > end - afterLength) {
-        fail("tag ${tagHex(tag)} declara $length bytes, restam ${end - afterLength}")
+        fail("valor ultrapassa o fim dos dados no offset $offset")
       }
       val valueEnd = afterLength + length
       val constructed = (first and 0x20) != 0
@@ -95,23 +104,23 @@ object TlvParser {
     if ((first and 0x1F) == 0x1F) {
       var count = 1
       do {
-        if (offset >= end) fail("tag truncada")
+        if (offset >= end) fail("tag truncada no offset $start")
         val next = bytes.u8(offset++)
         tag = (tag shl 8) or next
         count++
-        if (count > MAX_TAG_BYTES) fail("tag com mais de $MAX_TAG_BYTES bytes")
+        if (count > MAX_TAG_BYTES) fail("tag com mais de $MAX_TAG_BYTES bytes no offset $start")
       } while ((next and 0x80) != 0)
     }
     return tag to offset
   }
 
-  private fun readLength(bytes: ByteArray, start: Int, end: Int, tag: Int): Pair<Int, Int> {
-    if (start >= end) fail("comprimento ausente na tag ${tagHex(tag)}")
+  private fun readLength(bytes: ByteArray, start: Int, end: Int): Pair<Int, Int> {
+    if (start >= end) fail("comprimento ausente no offset $start")
     val first = bytes.u8(start)
     if (first < 0x80) return first to start + 1
     val count = first and 0x7F
-    if (count == 0 || count > 3) fail("forma de comprimento não suportada: ${"%02X".format(first)} na tag ${tagHex(tag)}")
-    if (start + count >= end) fail("comprimento truncado na tag ${tagHex(tag)}")
+    if (count == 0 || count > 3) fail("forma de comprimento não suportada no offset $start")
+    if (start + count >= end) fail("comprimento truncado no offset $start")
     var length = 0
     for (i in 1..count) {
       length = (length shl 8) or bytes.u8(start + i)

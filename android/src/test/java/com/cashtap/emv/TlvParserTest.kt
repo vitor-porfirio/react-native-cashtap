@@ -11,11 +11,11 @@ import org.junit.Test
 class TlvParserTest {
   /** Resposta de PPSE codificada à mão (comprimentos conferidos byte a byte, validável no emvlab.org). */
   private val ppseLiteral =
-    "6F23840E325041592E5359532E4444463031A511BF0C0E610C4F07A00000000310108701 01".replace(" ", "")
+    "6F23840E325041592E5359532E4444463031A511BF0C0E610C4F07A0000000031010870101"
 
   @Test
   fun `E4-H1 - tags de 1 byte`() {
-    val tlvs = TlvParser.parse("5A0841111111111111115F2403251231".hexToBytes().copyOfRange(0, 10))
+    val tlvs = TlvParser.parse("5A084111111111111111".hexToBytes())
     assertEquals(1, tlvs.size)
     assertEquals(0x5A, tlvs[0].tag)
     assertEquals("4111111111111111", tlvs[0].value.toHex())
@@ -72,7 +72,7 @@ class TlvParserTest {
 
   @Test
   fun `objeto primitivo não tem filhos`() {
-    val tlv = TlvParser.parse("5A0841111111111111111".dropLast(1).hexToBytes()).single()
+    val tlv = TlvParser.parse("5A084111111111111111".hexToBytes()).single()
     assertFalse(tlv.isConstructed)
     assertTrue(tlv.children.isEmpty())
   }
@@ -109,6 +109,31 @@ class TlvParserTest {
   @Test
   fun `tag com mais de 3 bytes é rejeitada`() {
     assertParseError("9F8181810100")
+  }
+
+  @Test
+  fun `RN-23 - mensagem de erro não repete bytes do cartão`() {
+    // Parse desalinhado dentro de um PAN: "tag" e "comprimento" seriam dígitos do número.
+    try {
+      TlvParser.parse("5A015483133300".hexToBytes())
+      fail()
+    } catch (e: EmvException) {
+      assertFalse(e.detail.contains("83"))
+      assertFalse(e.detail.contains("13"))
+      assertFalse(e.detail.contains("33"))
+    }
+  }
+
+  @Test
+  fun `wipe zera valor e cabeçalho recursivamente`() {
+    val tlvs = TlvParser.parse(Fixtures.VISA_GPO.hexToBytes())
+    tlvs.forEach(Tlv::wipe)
+    fun check(t: Tlv) {
+      assertTrue(t.value.all { it == 0.toByte() })
+      assertTrue(t.header.all { it == 0.toByte() })
+      t.children.forEach(::check)
+    }
+    tlvs.forEach(::check)
   }
 
   @Test

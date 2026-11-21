@@ -228,7 +228,9 @@ Modelo de entrada:
 
 **Decisão:** buscar em GPO + registros; PAN: 5A → 57 → 9F6B; validade: 5F24 → 57/9F6B. PAN validado (12–19 dígitos, Luhn) e validade validada (mês 01–12): falha vira `PARSE_ERROR` (recuperável), ausência vira `INCOMPLETE_DATA` (RN-21). O resultado atravessa a ponte como JSON e é revalidado no TS (`parseCardRead`) antes de chegar à máquina de estados (INV-4).
 
-**Consequências:** leitura corrompida por afastamento parcial é rejeitada em vez de devolver PAN errado. Strings JVM/JS são imutáveis: só os `ByteArray` das respostas são zerados (RN-26, limitação documentada).
+**Consequências:** leitura corrompida por afastamento parcial é rejeitada em vez de devolver PAN errado. Track 2 presente mas sem separador/validade também é `PARSE_ERROR` (recuperável), salvo quando 5A e 5F24 já bastam.
+
+**RN-26 (zeragem):** ao fim de toda leitura (sucesso ou falha), o orquestrador sobrescreve com zero todas as respostas brutas recebidas, os buffers montados por `GET RESPONSE` e o valor e cabeçalho de **todos** os TLVs decodificados (`Tlv.wipe()`, recursivo). Limitação: o PAN e a validade viram `String` (JVM) e depois `string` (JS) para chegar ao integrador; strings são imutáveis e ficam a cargo do coletor de lixo. `CardReadResult` e `ExtractedCardData` sobrescrevem `toString()` para nunca imprimir o PAN.
 
 ---
 
@@ -236,9 +238,33 @@ Modelo de entrada:
 
 **Decisão:**
 - ISO 7816-4: `6Cxx` → reenvia com `Le = xx`; `61xx` → `GET RESPONSE` até 16 vezes, concatenando os dados. Raro em ISO-DEP (T=CL), mas barato e evita falha espúria.
-- Diagnóstico: comandos saem em claro (só carregam dados do terminal e AIDs públicos); respostas são re-renderizadas a partir do TLV com o valor das tags sensíveis (5A, 57, 56, 9F6B, 5F20, 9F1F, 9F26, 9F10) substituído por `**`; resposta que não é TLV válido aparece só como tamanho. O criptograma aparece apenas como `cryptogramPresent: true/false` (RN-27).
+- Diagnóstico por **allowlist** (`EmvTags.DIAGNOSTIC_CLEAR`): comandos saem em claro (só dados do terminal e AIDs públicos); nas respostas, a estrutura (tag + comprimento) é sempre exibida, objetos construídos são percorridos, e o valor de um objeto primitivo só aparece se a tag estiver na allowlist (diretório, AIP, AFL, PDOL/CDOL, validade, ATC, CVM list etc.). Todo o resto vira `**` por byte — inclusive tags que o SDK não conhece. Resposta que não é TLV válido aparece só como tamanho. O criptograma aparece apenas como `cryptogramPresent: true/false` (RN-27).
+- Mensagens de erro do parser citam só posições (offset), nunca bytes lidos: num parse desalinhado, "tag" e "comprimento" seriam dígitos do PAN.
+
+**Alternativas:**
+- *Denylist das tags sensíveis* (primeira versão) — descartada na revisão do Tech Lead: o certificado da chave pública do ICC (`9F46`, presente em cartões com DDA/CDA) contém o PAN recuperável com a chave pública da CA, que é pública. Qualquer tag esquecida na denylist vaza; na allowlist, esquecer uma tag só esconde informação.
+
+**Referências:** OWASP Mobile Top 10 (2024) M6 — controles de privacidade inadequados e M9 — armazenamento inseguro; PCI DSS v4.0 req. 3.4.1 — exibição do PAN mascarada, no máximo BIN (6) + últimos 4 dígitos, que é o formato de `panMasked`.
 
 **Consequências:** a tela de diagnóstico pode ser mostrada à banca e exportada sem expor dados do portador; ainda permite conferir estrutura e SW de cada etapa no emvlab.
+
+---
+
+## D017 — Contrato de sessão nativa e seleção robusta  (2026-11-21 · F2–F4 · #9, #13, #14)
+
+**Contexto:** a revisão apontou três comportamentos que precisam de contrato explícito antes da máquina de estados (F5): cartão que sai e volta durante a leitura, cancelamento no meio do diálogo e respostas de GPO que significam "use outra aplicação".
+
+**Decisão:**
+- **Unidade atômica = cada APDU.** `cancelRead` é verificado antes de cada comando; uma troca nunca é interrompida. Consequência: a leitura pode terminar com sucesso depois do pedido de cancelamento, e a máquina de estados trata isso como CANCELLED (RN-10).
+- **Tag pendente.** O reader mode continua ligado durante a leitura; `onTagDetected` pode chegar em READING. O nativo guarda sempre a tag mais recente; a máquina de estados registra a detecção e, se a leitura em curso falhar de forma recuperável, lê de novo sem exigir nova aproximação.
+- **Não desligar o reader mode durante a leitura** (`stopReaderMode` derruba o IsoDep → `CARD_REMOVED` falso); só nos estados terminais.
+- **GPO `6984`/`6985`/`6986`** → descarta a aplicação e tenta a próxima candidata (Entry Point, Book B). Todas recusadas → `PROTOCOL_ERROR`.
+- **PPSE `6D00`/`6E00`/`6A81`** → `UNSUPPORTED_BRAND`: cartão ISO-DEP que não é de pagamento (crachá, transporte), sem gastar retentativas.
+- **PDOL > 252 bytes** → `PARSE_ERROR`; de 128 a 252 bytes, template `83 81 xx` (BER longo).
+- **`readCard`** valida os parâmetros do terminal antes de tocar no rádio, garante resolução única da Promise em qualquer caminho (inclusive módulo invalidado e `Throwable`), e rejeita leitura concorrente com detail `READ_IN_PROGRESS`.
+- A permissão `VIBRATE` sai do manifesto até a F6, que é quem a usa.
+
+**Consequências:** o contrato está documentado em `src/NativeCashtap.ts` e é a base dos testes da máquina de estados.
 
 ---
 

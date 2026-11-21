@@ -118,10 +118,73 @@ class EmvOrchestratorTest {
         ),
       ),
     )
-    val card = FakeTransceiver.mastercard().on(Commands.selectByName(Commands.PPSE_NAME), ppse + Fixtures.OK)
+    val card = FakeTransceiver.mastercard()
+      .on(Commands.selectByName(Commands.PPSE_NAME), ppse + Fixtures.OK)
+      .on(Commands.selectByName(Fixtures.VISA_AID.hexToBytes()), Fixtures.VISA_SELECT + Fixtures.OK)
     val result = orchestrator(card).read()
     assertEquals(CardBrand.MASTERCARD, result.brand)
+    // O Visa seria aceito: só a prioridade explica a escolha do Mastercard.
+    assertEquals(Commands.selectByName(Fixtures.MASTERCARD_AID.hexToBytes()).toBytes().toHex(), card.sent[1])
     assertFalse("não tentou o AID Elo", card.sent.any { it.contains("A0000004941010") })
+  }
+
+  @Test
+  fun `D014 - empate de prioridade respeita a ordem do diretório`() {
+    val ppse = c(
+      "6F",
+      c("A5", c("BF0C", c("61", p("4F", Fixtures.VISA_AID), p("87", "01")), c("61", p("4F", Fixtures.MASTERCARD_AID), p("87", "01")))),
+    )
+    val card = FakeTransceiver.visa()
+      .on(Commands.selectByName(Commands.PPSE_NAME), ppse + Fixtures.OK)
+      .on(Commands.selectByName(Fixtures.MASTERCARD_AID.hexToBytes()), Fixtures.MASTERCARD_SELECT + Fixtures.OK)
+    assertEquals(CardBrand.VISA, orchestrator(card).read().brand)
+  }
+
+  @Test
+  fun `D014 - aplicação sem 87 fica atrás das que declaram prioridade`() {
+    val ppse = c(
+      "6F",
+      c("A5", c("BF0C", c("61", p("4F", Fixtures.VISA_AID)), c("61", p("4F", Fixtures.MASTERCARD_AID), p("87", "05")))),
+    )
+    val card = FakeTransceiver.mastercard()
+      .on(Commands.selectByName(Commands.PPSE_NAME), ppse + Fixtures.OK)
+      .on(Commands.selectByName(Fixtures.VISA_AID.hexToBytes()), Fixtures.VISA_SELECT + Fixtures.OK)
+    assertEquals(CardBrand.MASTERCARD, orchestrator(card).read().brand)
+  }
+
+  @Test
+  fun `RN-13 - candidata do PPSE com SELECT recusado passa para a próxima`() {
+    val ppse = c(
+      "6F",
+      c("A5", c("BF0C", c("61", p("4F", Fixtures.VISA_AID), p("87", "01")), c("61", p("4F", Fixtures.MASTERCARD_AID), p("87", "02")))),
+    )
+    val card = FakeTransceiver.mastercard().on(Commands.selectByName(Commands.PPSE_NAME), ppse + Fixtures.OK)
+    assertEquals(CardBrand.MASTERCARD, orchestrator(card).read().brand)
+    assertTrue(card.sent[1].startsWith("00A4040007A0000000031010"))
+  }
+
+  @Test
+  fun `D014 - PPSE 9000 sem entradas de diretório é PARSE_ERROR`() {
+    val ppse = c("6F", p("84", Fixtures.ascii("2PAY.SYS.DDF01")), c("A5", p("88", "01")))
+    val card = FakeTransceiver().on(Commands.selectByName(Commands.PPSE_NAME), ppse + Fixtures.OK)
+    assertError(EmvError.PARSE_ERROR) { orchestrator(card).read() }
+  }
+
+  @Test
+  fun `cartão que não é de pagamento (PPSE 6D00) é UNSUPPORTED_BRAND`() {
+    listOf("6D00", "6E00", "6A81").forEach { sw ->
+      val card = FakeTransceiver().on(Commands.selectByName(Commands.PPSE_NAME), sw)
+      assertError(EmvError.UNSUPPORTED_BRAND) { orchestrator(card).read() }
+    }
+  }
+
+  @Test
+  fun `seleção parcial - AID completo vem do 84 do FCI`() {
+    val longAid = Fixtures.VISA_AID + "01"
+    val select = c("6F", p("84", longAid), c("A5", p("50", Fixtures.ascii("VISA"))))
+    val card = FakeTransceiver.visa().on(Commands.selectByName(Fixtures.VISA_AID.hexToBytes()), select + Fixtures.OK)
+      .on(Commands.getProcessingOptions(ByteArray(0)), Fixtures.VISA_GPO + Fixtures.OK)
+    assertEquals(longAid, orchestrator(card).read().aid)
   }
 
   @Test
@@ -143,6 +206,55 @@ class EmvOrchestratorTest {
   fun `GPO recusado é PROTOCOL_ERROR`() {
     val card = FakeTransceiver.visa().onPrefix("80A80000", "6985")
     assertError(EmvError.PROTOCOL_ERROR) { orchestrator(card).read() }
+  }
+
+  @Test
+  fun `GPO 6985 tenta a próxima aplicação`() {
+    val ppse = c(
+      "6F",
+      c("A5", c("BF0C", c("61", p("4F", Fixtures.VISA_AID), p("87", "01")), c("61", p("4F", Fixtures.MASTERCARD_AID), p("87", "02")))),
+    )
+    val card = FakeTransceiver.mastercard()
+      .on(Commands.selectByName(Commands.PPSE_NAME), ppse + Fixtures.OK)
+      .on(Commands.selectByName(Fixtures.VISA_AID.hexToBytes()), Fixtures.VISA_SELECT + Fixtures.OK)
+      .onPrefix("80A800002383", "6985") // GPO do Visa (com PDOL) recusado
+    val result = orchestrator(card).read()
+    assertEquals(CardBrand.MASTERCARD, result.brand)
+  }
+
+  @Test
+  fun `GPO 6985 em todas as aplicações é PROTOCOL_ERROR`() {
+    val card = FakeTransceiver.visa().onPrefix("80A80000", "6985")
+    assertError(EmvError.PROTOCOL_ERROR) { orchestrator(card).read() }
+  }
+
+  @Test
+  fun `GPO sem dados é PARSE_ERROR`() {
+    val card = FakeTransceiver.visa().onPrefix("80A80000", Fixtures.OK)
+    assertError(EmvError.PARSE_ERROR) { orchestrator(card).read() }
+  }
+
+  @Test
+  fun `GPO formato 1 com AFL inválido é PARSE_ERROR`() {
+    val card = FakeTransceiver.mastercard()
+      .on(Commands.getProcessingOptions(ByteArray(0)), p("80", "1980" + "080101") + Fixtures.OK)
+    assertError(EmvError.PARSE_ERROR) { orchestrator(card).read() }
+  }
+
+  @Test
+  fun `PDOL que exige mais de 252 bytes é PARSE_ERROR, não UNKNOWN`() {
+    // Duas entradas de 128 bytes: 256 > 252.
+    val hugePdol = c("6F", p("84", Fixtures.VISA_AID), c("A5", p("9F38", "DF0180" + "DF0280")))
+    val card = FakeTransceiver.visa().on(Commands.selectByName(Fixtures.VISA_AID.hexToBytes()), hugePdol + Fixtures.OK)
+    assertError(EmvError.PARSE_ERROR) { orchestrator(card).read() }
+  }
+
+  @Test
+  fun `PDOL de 128 a 252 bytes vai no GPO com 83 81 xx`() {
+    val pdol = c("6F", p("84", Fixtures.VISA_AID), c("A5", p("9F38", "DF0180")))
+    val card = FakeTransceiver.visa().on(Commands.selectByName(Fixtures.VISA_AID.hexToBytes()), pdol + Fixtures.OK)
+    orchestrator(card).read()
+    assertTrue(card.sent[2].startsWith("80A80000" + "83" + "838180"))
   }
 
   @Test
@@ -189,24 +301,72 @@ class EmvOrchestratorTest {
 
   // ---- ISO 7816-4: 61xx e 6Cxx ----
 
+  /** Mastercard em que PAN e validade só existem no registro SFI 2/1. */
+  private fun mastercardWithDataOnlyIn21() = FakeTransceiver.mastercard()
+    .on(Commands.readRecord(1, 1), c("70", p("8C", "9F0206")) + Fixtures.OK)
+
   @Test
   fun `6Cxx reenvia o comando com o Le correto`() {
-    val card = FakeTransceiver.visa()
-      .on(Commands.readRecord(1, 1), "6C${"%02X".format(Fixtures.VISA_RECORD_1_1.length / 2)}")
-      .on(Commands.readRecord(1, 1).withLe(Fixtures.VISA_RECORD_1_1.length / 2), Fixtures.VISA_RECORD_1_1 + Fixtures.OK)
-    assertEquals("2512", orchestrator(card).read().expiry)
+    val record = Fixtures.MASTERCARD_RECORD_2_1
+    val length = record.length / 2
+    val retry = Commands.readRecord(2, 1).withLe(length)
+    val card = mastercardWithDataOnlyIn21()
+      .on(Commands.readRecord(2, 1), "6C%02X".format(length))
+      .on(retry, record + Fixtures.OK)
+    val result = orchestrator(card).read()
+    assertEquals(Fixtures.MASTERCARD_PAN, result.pan)
+    assertTrue(card.sent.contains(retry.toBytes().toHex()))
   }
 
   @Test
-  fun `61xx busca o restante com GET RESPONSE`() {
-    val record = Fixtures.VISA_RECORD_1_1
-    val half = record.length / 2 / 2 * 2
-    val first = record.substring(0, half)
-    val rest = record.substring(half)
+  fun `61xx busca o restante com GET RESPONSE e remonta a resposta`() {
+    val record = Fixtures.MASTERCARD_RECORD_2_1
+    val first = record.substring(0, 10)
+    val rest = record.substring(10)
+    val getResponse = Commands.getResponse(rest.length / 2)
+    val card = mastercardWithDataOnlyIn21()
+      .on(Commands.readRecord(2, 1), first + "61%02X".format(rest.length / 2))
+      .on(getResponse, rest + Fixtures.OK)
+    val result = orchestrator(card).read()
+    assertEquals(Fixtures.MASTERCARD_PAN, result.pan)
+    assertEquals("2512", result.expiry)
+    assertTrue(card.sent.contains(getResponse.toBytes().toHex()))
+  }
+
+  @Test
+  fun `E3-H5 - registro malformado é ignorado sem abortar`() {
+    val logger = RecordingLogger()
+    val card = FakeTransceiver.mastercard().on(Commands.readRecord(1, 1), "70055A08" + Fixtures.OK)
+    assertEquals(Fixtures.MASTERCARD_PAN, orchestrator(card, logger = logger).read().pan)
+    assertTrue(logger.lines.any { it.contains("ignorado") })
+  }
+
+  @Test
+  fun `RN-10 - cancelamento antes do primeiro comando não envia nada`() {
     val card = FakeTransceiver.visa()
-      .on(Commands.readRecord(1, 1), first + "61%02X".format(rest.length / 2))
-      .on(Commands.getResponse(rest.length / 2), rest + Fixtures.OK)
-    assertEquals("2512", orchestrator(card).read().expiry)
+    assertError(EmvError.CANCELLED_BY_USER) { orchestrator(card, isCancelled = { true }).read() }
+    assertTrue(card.sent.isEmpty())
+  }
+
+  @Test
+  fun `RN-26 - respostas do cartão ficam zeradas após leitura com sucesso`() {
+    val card = FakeTransceiver.mastercard()
+    orchestrator(card).read()
+    assertTrue(card.returned.isNotEmpty())
+    assertTrue(card.returned.all { buffer -> buffer.all { it == 0.toByte() } })
+  }
+
+  @Test
+  fun `RN-26 - respostas do cartão ficam zeradas também na falha`() {
+    val card = FakeTransceiver.visa().apply { loseLinkOnCall = 4 }
+    assertError(EmvError.CARD_REMOVED) { orchestrator(card).read() }
+    assertTrue(card.returned.all { buffer -> buffer.all { it == 0.toByte() } })
+  }
+
+  @Test
+  fun `RN-23 - toString do resultado não imprime o PAN`() {
+    val result = orchestrator(FakeTransceiver.visa()).read()
+    assertFalse(result.toString().contains(Fixtures.VISA_PAN))
   }
 
   // ---- Segurança ----
