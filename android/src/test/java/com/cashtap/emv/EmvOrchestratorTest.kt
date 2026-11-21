@@ -392,8 +392,9 @@ class EmvOrchestratorTest {
       t.value.all { it == 0.toByte() } && t.header.all { it == 0.toByte() } && t.children.all(::allZero)
     assertTrue(tlvs.isNotEmpty())
     assertTrue("TLVs decodificados", tlvs.all(::allZero))
-    // inclui os buffers montados por GET RESPONSE, que não vêm do transceiver
-    assertTrue(buffers.size > card.returned.size)
+    // 2 por resposta do transceiver (bruta + dados) + 3 do GET RESPONSE
+    // (concatenação intermediária, resposta remontada e seus dados).
+    assertEquals(2 * card.returned.size + 3, buffers.size)
     assertTrue("buffers", buffers.all { b -> b.all { it == 0.toByte() } })
   }
 

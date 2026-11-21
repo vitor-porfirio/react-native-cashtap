@@ -88,11 +88,26 @@ class MaskingTest {
   }
 
   @Test
-  fun `RN-26 - a cópia decodificada para o diagnóstico é zerada (não altera a entrada)`() {
+  fun `RN-26 - a cópia decodificada para o diagnóstico é zerada`() {
+    var decoded: List<Tlv> = emptyList()
+    Masking.wipeObserver = { decoded = it }
+    try {
+      Masking.maskResponseData(Fixtures.VISA_GPO.hexToBytes())
+    } finally {
+      Masking.wipeObserver = null
+    }
+    fun allZero(t: Tlv): Boolean =
+      t.value.all { it == 0.toByte() } && t.header.all { it == 0.toByte() } && t.children.all(::allZero)
+    assertTrue(decoded.isNotEmpty())
+    assertTrue(decoded.all(::allZero))
+  }
+
+  @Test
+  fun `diagnóstico não altera a entrada, que pertence ao chamador`() {
     val data = Fixtures.VISA_GPO.hexToBytes()
     val copy = data.copyOf()
     Masking.maskResponseData(data)
-    assertTrue("entrada pertence ao chamador e não é tocada", data.contentEquals(copy))
+    assertTrue(data.contentEquals(copy))
   }
 
   @Test

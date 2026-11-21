@@ -7,6 +7,9 @@ package com.cashtap.emv
 object Masking {
   private const val MASK_BYTE = "**"
 
+  /** Só para testes: recebe a cópia decodificada depois de zerada (RN-26). */
+  internal var wipeObserver: ((List<Tlv>) -> Unit)? = null
+
   /** `123456******7890`: 6 primeiros e 4 últimos dígitos. PAN curto é mascarado por inteiro. */
   fun maskPan(pan: String): String {
     if (pan.length < 11) return "*".repeat(pan.length)
@@ -30,6 +33,7 @@ object Masking {
       buildString { tlvs.forEach { render(it, this) } }
     } finally {
       tlvs.forEach(Tlv::wipe) // RN-26: a cópia decodificada aqui também tinha dado do cartão.
+      wipeObserver?.invoke(tlvs)
     }
   }
 
