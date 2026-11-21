@@ -168,6 +168,80 @@ Modelo de entrada:
 
 ---
 
+## D011 — F2, F3 e F4 entregues num único PR  (2026-11-21 · F2–F4)
+
+**Contexto:** a D007 prevê um PR por fase. Sessão NFC (F2), diálogo EMV (F3) e extração de dados (F4) formam uma única operação atômica (`readCard`): o orquestrador depende do extrator e da máscara, e nenhuma das fases é verificável isoladamente no device sem as outras.
+
+**Decisão:** um PR `fase/f2-f4-nucleo-nativo`, com uma rodada de QA + Tech Lead cobrindo as issues #6–#17 e #23.
+
+**Consequências:** uma revisão maior e mais coerente; a trilha por issue continua nos commits e no corpo do PR.
+
+---
+
+## D012 — Reader mode: flags, ciclo de vida e tag de uso único  (2026-11-21 · F2 · #8, #9)
+
+**Contexto:** E2-H2 pede detecção rápida, liberação do rádio e respeito ao ciclo de vida da Activity; E2-H3 pede canal IsoDep fechado em qualquer caminho.
+
+**Decisão:**
+- `enableReaderMode` com `FLAG_READER_NFC_A | NFC_B | SKIP_NDEF_CHECK | NO_PLATFORM_SOUNDS`: cartões EMV são ISO 14443 A ou B, não carregam NDEF (checar seria só latência), e o feedback sonoro/tátil é do SDK.
+- `NfcSessionManager` usa `currentActivity` no momento do uso, desliga em `onHostPause`, religa em `onHostResume` se a sessão estiver ativa, e se registra/desregistra como `LifecycleEventListener`.
+- A `Tag` detectada é entregue **uma vez** (`takeTag`): cada leitura exige uma aproximação, o que torna a retentativa (RN-07) previsível.
+- `IsoDepTransceiver`: timeout de 5 s, `TagLostException`/`IOException`/`IllegalStateException` → `LinkLostException` → `CARD_REMOVED`; `close()` em `finally` (RN-11).
+- Toda troca de APDU num executor de thread única; `invalidate()` encerra executor, sessão e monitor.
+
+**Alternativas:**
+- *`enableForegroundDispatch`* — descartada: entrega a tag via `Intent`/`onNewIntent` da Activity do integrador, exigindo código no app hospedeiro e passando pelo despacho NDEF do sistema.
+
+**Consequências:** o integrador não escreve nada na Activity; o rádio é liberado ao sair do app. Comportamento real de pause/resume só se comprova no device (roteiro F2).
+
+---
+
+## D013 — Valores de terminal no PDOL  (2026-11-21 · F3 · #14)
+
+**Contexto:** o GPO precisa responder ao PDOL com o comprimento exato de cada elemento (RN-16, E3-H4); um byte errado faz o cartão recusar sem explicação (risco nº 1 da especificação).
+
+**Decisão:** `PdolBuilder` preenche: 9F02 com o **valor real** em BCD n12 (a especificação permite zero; o valor real evita recusa por "valor zero" em alguns kernels Visa), 9F03 zero, 9F1A `0076` (Brasil), 5F2A pela moeda informada (`0986`), 95 zero, 9A/9F21 data e hora locais, 9C `00`, 9F37 4 bytes de `SecureRandom`, 9F66 (TTQ) `36004000`, 9F35 `22`, 9F33 `E0F0C8`, 9F40 `6000F0A001`, 9F4E "CashTap". Tag desconhecida vai zerada. Ajuste de comprimento conforme EMV Book 3 §5.4: numérico completa/trunca à esquerda; demais, à direita.
+
+**Alternativas:**
+- *Tudo zerado* — descartada como padrão: TTQ zerado não anuncia qVSDC e cartões Visa podem recusar; mantida como comportamento para tags desconhecidas.
+
+**Consequências:** primeiro ponto a revisar se um cartão real responder `6985`/`6984` ao GPO — o diagnóstico mostra o comando GPO completo (só dados do terminal, sem dado do cartão) para conferência no emvlab.
+
+---
+
+## D014 — Seleção de aplicação: prioridade e fallback  (2026-11-21 · F3 · #11, #13)
+
+**Contexto:** RN-13 manda selecionar "a primeira" aplicação suportada do PPSE; RN-15 manda tentar AIDs conhecidos quando o PPSE responde `6A82`.
+
+**Decisão:** entre as aplicações suportadas, vale o *Application Priority Indicator* (tag 87, nibble baixo; ausente = menor prioridade) e, no empate, a ordem do diretório. Se o SELECT de uma candidata falhar, tenta a próxima. Fallback (`6A82`): `A0000000031010`, `A0000000032010` (Visa Electron), `A0000000041010`, `A0000000043060` (Maestro) — todos mapeados por RID para Visa/Mastercard (RN-20). PPSE `9000` sem entradas `61` → `PARSE_ERROR`; PPSE com outro SW → `PROTOCOL_ERROR`.
+
+**Alternativas:**
+- *Primeira na ordem do diretório, ignorando a 87* — descartada: contraria o EMV Book B quando o emissor declara prioridade; para cartões com uma só aplicação o resultado é idêntico.
+
+**Consequências:** divergência registrada em relação à leitura literal de RN-13 (mais aderente ao EMV). Cartões co-branded (ex.: Elo + Mastercard) escolhem a aplicação suportada.
+
+---
+
+## D015 — Extração: fallbacks além da especificação e validação  (2026-11-21 · F4 · #16)
+
+**Contexto:** RN-18/19 preveem 5A → 57 e 5F24 → 57. Cartões Mastercard em modo contactless podem trazer o Track 2 em `9F6B`; cartões Visa qVSDC costumam trazer o Track 2 (57) já na resposta do GPO, sem registros.
+
+**Decisão:** buscar em GPO + registros; PAN: 5A → 57 → 9F6B; validade: 5F24 → 57/9F6B. PAN validado (12–19 dígitos, Luhn) e validade validada (mês 01–12): falha vira `PARSE_ERROR` (recuperável), ausência vira `INCOMPLETE_DATA` (RN-21). O resultado atravessa a ponte como JSON e é revalidado no TS (`parseCardRead`) antes de chegar à máquina de estados (INV-4).
+
+**Consequências:** leitura corrompida por afastamento parcial é rejeitada em vez de devolver PAN errado. Strings JVM/JS são imutáveis: só os `ByteArray` das respostas são zerados (RN-26, limitação documentada).
+
+---
+
+## D016 — Tratamento de 61xx/6Cxx e mascaramento do diagnóstico  (2026-11-21 · F3/F4 · #10, #23)
+
+**Decisão:**
+- ISO 7816-4: `6Cxx` → reenvia com `Le = xx`; `61xx` → `GET RESPONSE` até 16 vezes, concatenando os dados. Raro em ISO-DEP (T=CL), mas barato e evita falha espúria.
+- Diagnóstico: comandos saem em claro (só carregam dados do terminal e AIDs públicos); respostas são re-renderizadas a partir do TLV com o valor das tags sensíveis (5A, 57, 56, 9F6B, 5F20, 9F1F, 9F26, 9F10) substituído por `**`; resposta que não é TLV válido aparece só como tamanho. O criptograma aparece apenas como `cryptogramPresent: true/false` (RN-27).
+
+**Consequências:** a tela de diagnóstico pode ser mostrada à banca e exportada sem expor dados do portador; ainda permite conferir estrutura e SW de cada etapa no emvlab.
+
+---
+
 # Divergências spec EMV × cartão real
 
 | Data | Cartão | Esperado pela spec | Observado | Hex |
