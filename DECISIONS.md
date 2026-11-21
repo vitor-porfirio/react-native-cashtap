@@ -97,6 +97,32 @@ Modelo de entrada:
 
 ---
 
+## D006 — API pública em inglês; mensagens ao operador em pt-BR  (2026-11-21 · F0)
+
+**Contexto:** o Apêndice A do TCC descreve a interface em português (`capturar`, `CapturaParams`, `status: "sucesso"`), enquanto a especificação técnica já usa inglês nos estados (`WAITING_CARD`) e nos códigos de erro (`CARD_REMOVED`). O pacote se apresenta como SDK de mercado.
+
+**Decisão:** identificadores públicos em inglês (`capture`, `CaptureParams`, `CaptureResult`, `status: 'success' | 'cancelled' | 'timeout' | 'error'`). Textos mostrados ao operador continuam em pt-BR, centralizados no catálogo de erros e no tema. A equivalência com o Apêndice A está em `docs/especificacao.md`, e o apêndice é atualizado com a interface final.
+
+**Alternativas:**
+- *Português, como o Apêndice A* — descartada: foge do padrão de SDK publicado em npm e resultaria numa API mista, já que estados e códigos de erro estão em inglês na especificação.
+
+**Consequências:** API consistente e familiar ao integrador; o Apêndice A precisa de revisão (já prevista no próprio texto do TCC).
+
+---
+
+## D007 — Processo de entrega: fases com gate de QA e Tech Lead  (2026-11-21 · F0)
+
+**Contexto:** o projeto passou de mentoria task a task para entrega completa com prazo curto, com a implementação feita pelo Claude e a validação física pelo autor.
+
+**Decisão:** cada fase da especificação (F1..F8) é uma branch e um PR. Antes do merge, dois agentes revisores precisam aprovar: `qa` (executa toda a bateria de testes e builds e rastreia cada critério de aceite a um teste) e `tech-lead` (revisa o diff contra as regras do projeto e padrões de SDK). As regras ficam em `.claude/rules/`, os agentes em `.claude/agents/`. Issues cujo critério depende de celular e cartão ficam abertas com o label `validar-no-device` até o teste físico.
+
+**Alternativas:**
+- *Commits direto na `main`* — descartada: perde a trilha de revisão, que também é evidência do processo para a banca.
+
+**Consequências:** histórico revisado e rastreável; a fase só avança com testes verdes. O que depende de hardware fica explicitamente marcado, sem falsa sensação de pronto.
+
+---
+
 # Divergências spec EMV × cartão real
 
 | Data | Cartão | Esperado pela spec | Observado | Hex |
