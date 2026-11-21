@@ -123,6 +123,33 @@ Modelo de entrada:
 
 ---
 
+## D008 — Remoção do iOS e guarda de plataforma no TS  (2026-11-21 · F1 · #3)
+
+**Contexto:** o template gerou `ios/`, `Cashtap.podspec`, `example/ios`, `Gemfile` e um job de build iOS no CI. Com a spec do Turbo Module mudando, o `Cashtap.mm` ficaria desatualizado e quebraria o build iOS. A especificação (E1-H1) admite remover a pasta ou deixar um stub.
+
+**Decisão:** remover todo o código e configuração iOS do pacote e do example. O TS acessa o módulo nativo só por `src/native.ts`, que devolve `null` fora do Android (`Platform.OS` + `TurboModuleRegistry.get`, não `getEnforcing`). A API pública responde `UNSUPPORTED` em vez de lançar no import.
+
+**Alternativas:**
+- *Stub iOS que rejeita "não suportado"* — descartada: manteria Podspec, Xcode project e job de CI só para dizer "não", e o stub teria que acompanhar cada mudança da spec.
+
+**Consequências:** um app iOS que instale o pacote compila (não há pod) e recebe `UNSUPPORTED` em tempo de execução, sem crash. O integrador multiplataforma pode chamar a API sem `if (Platform.OS)`.
+
+---
+
+## D009 — Evento `onNfcStatusChange` e eventos tipados do Codegen  (2026-11-21 · F1 · #5)
+
+**Contexto:** a F1 exige um evento nativo → JS. A especificação §2.4 sugere o padrão antigo `addListener`/`removeListeners` + `NativeEventEmitter`. A RN 0.76+ oferece `CodegenTypes.EventEmitter<T>` na spec, que gera `emitOnX` tipado na classe base Kotlin.
+
+**Decisão:** usar `CodegenTypes.EventEmitter`. O primeiro evento é `onNfcStatusChange`, alimentado por um `BroadcastReceiver` de `NfcAdapter.ACTION_ADAPTER_STATE_CHANGED`, registrado com `RECEIVER_NOT_EXPORTED` no Android 13+ e removido no `invalidate()`. Ele também atende RN-02: quando o operador liga o NFC nas configurações, a UI reverifica sozinha. Exposto na API pública como `onNfcStatusChange(listener): Unsubscribe`.
+
+**Alternativas:**
+- *`addListener`/`removeListeners` + `NativeEventEmitter`* — descartada: sem tipagem do payload, nomes de evento como strings soltas e dois métodos de spec só de infraestrutura.
+- *Evento de teste artificial* — descartado: código sem uso em produção.
+
+**Consequências:** eventos com payload tipado e validado na fronteira; `subscription.remove()` desfaz a assinatura (teste em `src/__tests__/native.test.ts`). A superfície pública ganha uma função, justificada pelo uso real.
+
+---
+
 # Divergências spec EMV × cartão real
 
 | Data | Cartão | Esperado pela spec | Observado | Hex |
