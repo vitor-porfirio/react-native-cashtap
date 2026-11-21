@@ -8,6 +8,7 @@ import {
   transition,
   type CaptureState,
   type Effect,
+  type MachineContext,
   type MachineEvent,
   type MachineSnapshot,
 } from '../machine';
@@ -27,12 +28,26 @@ const card: NativeCardRead = {
   },
 };
 
+const someError = createError('UNKNOWN');
+
+/** Monta um snapshot válido para qualquer estado, com o dado que o estado exige. */
 function at(
   state: CaptureState,
-  context: Partial<MachineSnapshot['context']> = {}
+  context: Partial<MachineContext> = {},
+  extra: { error?: ReturnType<typeof createError>; card?: NativeCardRead } = {}
 ): MachineSnapshot {
-  const base = initialSnapshot(2);
-  return { state, context: { ...base.context, ...context } };
+  const ctx = { ...initialSnapshot(2).context, ...context };
+  switch (state) {
+    case 'RECOVERABLE_FAILURE':
+    case 'TIMEOUT':
+    case 'ERROR':
+      return { state, context: ctx, error: extra.error ?? someError };
+    case 'PROCESSING':
+    case 'SUCCESS':
+      return { state, context: ctx, card: extra.card ?? card };
+    default:
+      return { state, context: ctx };
+  }
 }
 
 function run(snapshot: MachineSnapshot, ...events: MachineEvent[]) {
@@ -47,21 +62,52 @@ function run(snapshot: MachineSnapshot, ...events: MachineEvent[]) {
 }
 
 const types = (effects: Effect[]) => effects.map((e) => e.type);
+const errorCode = (s: MachineSnapshot) =>
+  'error' in s ? s.error.code : undefined;
 
 const ALL_EVENTS: MachineEvent[] = [
   { type: 'START' },
   { type: 'NFC_READY' },
   { type: 'NFC_UNAVAILABLE', error: createError('NFC_DISABLED') },
+  { type: 'NFC_UNAVAILABLE', error: createError('NFC_UNSUPPORTED') },
   { type: 'TAG_DETECTED' },
   { type: 'WAIT_TIMEOUT' },
   { type: 'CANCEL' },
   { type: 'READ_SUCCEEDED', card },
   { type: 'READ_FAILED', error: createError('CARD_REMOVED') },
+  { type: 'READ_FAILED', error: createError('UNSUPPORTED_BRAND') },
   { type: 'RETRY' },
   { type: 'PROCESS' },
   { type: 'RECHECK' },
   { type: 'FINISH' },
 ];
+
+/** Varre estado × evento × variações de contexto (flags e contadores). */
+function* everyTransition() {
+  const contexts: Array<Partial<MachineContext>> = [
+    {},
+    { cancelRequested: true },
+    { pendingTag: true },
+    { cancelRequested: true, pendingTag: true },
+    { failures: 3 },
+    { failures: 1, pendingTag: true },
+  ];
+  const errors = [
+    someError,
+    createError('NFC_DISABLED'),
+    createError('NFC_UNSUPPORTED'),
+  ];
+  for (const state of CAPTURE_STATES) {
+    for (const context of contexts) {
+      for (const error of errors) {
+        const before = at(state, context, { error });
+        for (const event of ALL_EVENTS) {
+          yield { before, event, result: transition(before, event) };
+        }
+      }
+    }
+  }
+}
 
 describe('máquina de estados — tabela de transições (§4.2)', () => {
   it('IDLE + START → CHECKING, verificando e ligando o rádio', () => {
@@ -84,7 +130,7 @@ describe('máquina de estados — tabela de transições (§4.2)', () => {
         error: createError(code),
       });
       expect(snapshot.state).toBe('ERROR');
-      expect(snapshot.context.error?.code).toBe(code);
+      expect(errorCode(snapshot)).toBe(code);
     }
   );
 
@@ -102,7 +148,7 @@ describe('máquina de estados — tabela de transições (§4.2)', () => {
       type: 'WAIT_TIMEOUT',
     });
     expect(snapshot.state).toBe('TIMEOUT');
-    expect(snapshot.context.error?.code).toBe('TIMEOUT');
+    expect(errorCode(snapshot)).toBe('TIMEOUT');
     expect(types(effects)).toEqual([
       'CLEAR_WAIT_TIMER',
       'STOP_READER',
@@ -113,7 +159,11 @@ describe('máquina de estados — tabela de transições (§4.2)', () => {
   it('RN-10: WAITING_CARD + cancelar → CANCELLED imediatamente', () => {
     const { snapshot, effects } = run(at('WAITING_CARD'), { type: 'CANCEL' });
     expect(snapshot.state).toBe('CANCELLED');
-    expect(types(effects)).toContain('STOP_READER');
+    expect(types(effects)).toEqual([
+      'CLEAR_WAIT_TIMER',
+      'STOP_READER',
+      'SCHEDULE',
+    ]);
   });
 
   it('READING + leitura ok → PROCESSING', () => {
@@ -135,6 +185,7 @@ describe('máquina de estados — tabela de transições (§4.2)', () => {
         error: createError(code),
       });
       expect(snapshot.state).toBe('RECOVERABLE_FAILURE');
+      expect(errorCode(snapshot)).toBe(code);
       expect(snapshot.context.failures).toBe(1);
       expect(effects).toEqual([
         { type: 'SCHEDULE', event: { type: 'RETRY' }, delay: 'recovery' },
@@ -150,7 +201,7 @@ describe('máquina de estados — tabela de transições (§4.2)', () => {
         error: createError(code),
       });
       expect(snapshot.state).toBe('ERROR');
-      expect(snapshot.context.error?.code).toBe(code);
+      expect(errorCode(snapshot)).toBe(code);
       expect(types(effects)).toContain('STOP_READER');
     }
   );
@@ -171,10 +222,10 @@ describe('máquina de estados — tabela de transições (§4.2)', () => {
       type: 'RETRY',
     });
     expect(snapshot.state).toBe('ERROR');
-    expect(snapshot.context.error?.code).toBe('READ_FAILED_MAX_RETRIES');
+    expect(errorCode(snapshot)).toBe('READ_FAILED_MAX_RETRIES');
   });
 
-  it('RECOVERABLE_FAILURE + cartão reaproximado → READING direto', () => {
+  it('D018: RECOVERABLE_FAILURE + cartão reaproximado → READING direto', () => {
     const { snapshot, effects } = run(
       at('RECOVERABLE_FAILURE', { failures: 1 }),
       {
@@ -199,32 +250,26 @@ describe('máquina de estados — tabela de transições (§4.2)', () => {
   });
 
   it('PROCESSING com dados válidos → SUCCESS', () => {
-    const { snapshot } = run(at('PROCESSING', { card }), { type: 'PROCESS' });
+    const { snapshot } = run(at('PROCESSING'), { type: 'PROCESS' });
     expect(snapshot.state).toBe('SUCCESS');
   });
 
-  it('RN-21: PROCESSING sem validade → ERROR INCOMPLETE_DATA', () => {
+  it('RN-21: PROCESSING sem validade → ERROR INCOMPLETE_DATA, sem cartão no snapshot', () => {
     const { snapshot } = run(
-      at('PROCESSING', { card: { ...card, expiry: '' } }),
+      at('PROCESSING', {}, { card: { ...card, expiry: '' } }),
       {
         type: 'PROCESS',
       }
     );
     expect(snapshot.state).toBe('ERROR');
-    expect(snapshot.context.error?.code).toBe('INCOMPLETE_DATA');
-    expect(snapshot.context.card).toBeUndefined();
+    expect(errorCode(snapshot)).toBe('INCOMPLETE_DATA');
+    expect('card' in snapshot).toBe(false);
   });
 
   it.each(['SUCCESS', 'CANCELLED', 'TIMEOUT', 'ERROR'] as const)(
     '%s + FINISH → IDLE resolvendo o desfecho',
     (state) => {
-      const context =
-        state === 'SUCCESS'
-          ? { card }
-          : state === 'ERROR'
-            ? { error: createError('UNKNOWN') }
-            : {};
-      const { snapshot, effects } = run(at(state, context), { type: 'FINISH' });
+      const { snapshot, effects } = run(at(state), { type: 'FINISH' });
       expect(snapshot.state).toBe('IDLE');
       expect(effects).toHaveLength(1);
       expect(effects[0]).toMatchObject({ type: 'RESOLVE', outcome: { state } });
@@ -232,7 +277,7 @@ describe('máquina de estados — tabela de transições (§4.2)', () => {
   );
 });
 
-describe('cancelamento durante operação atômica (RN-10, E5-H4)', () => {
+describe('cancelamento (RN-10, E5-H4, D018)', () => {
   it('READING + cancelar: aceita, pede o cancelamento ao nativo e continua lendo', () => {
     const { snapshot, effects } = run(at('READING'), { type: 'CANCEL' });
     expect(snapshot.state).toBe('READING');
@@ -275,7 +320,7 @@ describe('cancelamento durante operação atômica (RN-10, E5-H4)', () => {
     expect(snapshot.state).toBe('CANCELLED');
   });
 
-  it('cancelar durante CHECKING vale quando o NFC responder', () => {
+  it('cancelar durante CHECKING vale quando o NFC responder pronto', () => {
     const { snapshot } = run(
       at('CHECKING'),
       { type: 'CANCEL' },
@@ -283,12 +328,37 @@ describe('cancelamento durante operação atômica (RN-10, E5-H4)', () => {
     );
     expect(snapshot.state).toBe('CANCELLED');
   });
+
+  it('cancelar durante CHECKING com NFC desligado encerra como CANCELLED (não espera o operador)', () => {
+    const { snapshot, effects } = run(
+      at('CHECKING'),
+      { type: 'CANCEL' },
+      { type: 'NFC_UNAVAILABLE', error: createError('NFC_DISABLED') }
+    );
+    expect(snapshot.state).toBe('CANCELLED');
+    expect(effects).toContainEqual({
+      type: 'SCHEDULE',
+      event: { type: 'FINISH' },
+      delay: 'immediate',
+    });
+  });
+
+  it.each(['PROCESSING', 'SUCCESS', 'TIMEOUT', 'CANCELLED'] as const)(
+    'D018: cancelar em %s é ignorado — o resultado já existe',
+    (state) => {
+      expect(transition(at(state), { type: 'CANCEL' }).changed).toBe(false);
+    }
+  );
+
+  it('D018: cancelar em ERROR comum é ignorado (já vai encerrar)', () => {
+    expect(transition(at('ERROR'), { type: 'CANCEL' }).changed).toBe(false);
+  });
 });
 
-describe('NFC desligado (RN-01, RN-02)', () => {
-  const disabled = at('ERROR', { error: createError('NFC_DISABLED') });
+describe('NFC indisponível (RN-01, RN-02, D018)', () => {
+  const disabled = at('ERROR', {}, { error: createError('NFC_DISABLED') });
 
-  it('RN-02: não encerra sozinho: espera o operador', () => {
+  it('RN-02: NFC desligado não encerra sozinho: espera o operador', () => {
     const { effects } = run(at('CHECKING'), {
       type: 'NFC_UNAVAILABLE',
       error: createError('NFC_DISABLED'),
@@ -296,10 +366,18 @@ describe('NFC desligado (RN-01, RN-02)', () => {
     expect(types(effects)).toEqual(['STOP_READER']);
   });
 
-  it('RN-02: reverificar volta a CHECKING e tenta ligar o rádio', () => {
-    const { snapshot, effects } = run(disabled, { type: 'RECHECK' });
+  it('RN-02: reverificar volta a CHECKING, liga o rádio e limpa as flags', () => {
+    const { snapshot, effects } = run(
+      at(
+        'ERROR',
+        { cancelRequested: true, pendingTag: true },
+        { error: createError('NFC_DISABLED') }
+      ),
+      { type: 'RECHECK' }
+    );
     expect(snapshot.state).toBe('CHECKING');
-    expect(snapshot.context.error).toBeUndefined();
+    expect(snapshot.context.cancelRequested).toBe(false);
+    expect(snapshot.context.pendingTag).toBe(false);
     expect(types(effects)).toEqual(['START_READER']);
   });
 
@@ -324,15 +402,27 @@ describe('NFC desligado (RN-01, RN-02)', () => {
     });
   });
 
+  it.each(['WAITING_CARD', 'RECOVERABLE_FAILURE'] as const)(
+    'D018: NFC desligado em %s vai direto para ERROR(NFC_DISABLED), sem esperar o timeout',
+    (state) => {
+      const { snapshot, effects } = run(at(state), {
+        type: 'NFC_UNAVAILABLE',
+        error: createError('NFC_DISABLED'),
+      });
+      expect(snapshot.state).toBe('ERROR');
+      expect(errorCode(snapshot)).toBe('NFC_DISABLED');
+      expect(types(effects)).toContain('STOP_READER');
+      if (state === 'WAITING_CARD')
+        expect(types(effects)).toContain('CLEAR_WAIT_TIMER');
+    }
+  );
+
   it('RECHECK com outro erro é ignorado', () => {
-    const result = transition(at('ERROR', { error: createError('UNKNOWN') }), {
-      type: 'RECHECK',
-    });
-    expect(result.changed).toBe(false);
+    expect(transition(at('ERROR'), { type: 'RECHECK' }).changed).toBe(false);
   });
 });
 
-describe('tag pendente (D017)', () => {
+describe('tag pendente (D017, D018)', () => {
   it('cartão reaproximado durante a leitura é lembrado, sem nova leitura concorrente', () => {
     const { snapshot, effects } = run(at('READING'), { type: 'TAG_DETECTED' });
     expect(snapshot.state).toBe('READING');
@@ -365,88 +455,95 @@ describe('tag pendente (D017)', () => {
       { type: 'SCHEDULE', event: { type: 'RETRY' }, delay: 'recovery' },
     ]);
   });
+
+  it('cartão já no campo durante CHECKING é lido assim que o NFC fica pronto, sem timer', () => {
+    const { snapshot, effects } = run(
+      at('CHECKING'),
+      { type: 'TAG_DETECTED' },
+      { type: 'NFC_READY' }
+    );
+    expect(snapshot.state).toBe('READING');
+    expect(types(effects)).toEqual(['READ_CARD']);
+  });
 });
 
-describe('invariantes (§4.3)', () => {
+describe('invariantes (§4.3) — varredura estado × evento × contexto', () => {
   it('INV-1: toda entrada em estado terminal desliga o reader mode', () => {
-    for (const state of CAPTURE_STATES) {
-      for (const event of ALL_EVENTS) {
-        const context =
-          state === 'PROCESSING' || state === 'SUCCESS' ? { card } : {};
-        const result = transition(at(state, context), event);
-        if (
-          result.changed &&
-          isTerminal(result.snapshot.state) &&
-          result.snapshot.state !== state
-        ) {
-          expect(types(result.effects)).toContain('STOP_READER');
-        }
+    for (const { before, result } of everyTransition()) {
+      if (
+        result.changed &&
+        isTerminal(result.snapshot.state) &&
+        result.snapshot.state !== before.state
+      ) {
+        expect(types(result.effects)).toContain('STOP_READER');
+      }
+    }
+  });
+
+  it('INV-3: RESOLVE só sai de estado terminal, uma vez, levando a IDLE', () => {
+    for (const { before, result } of everyTransition()) {
+      const resolves = types(result.effects).filter((t) => t === 'RESOLVE');
+      if (resolves.length > 0) {
+        expect(resolves).toHaveLength(1);
+        expect(isTerminal(before.state)).toBe(true);
+        expect(result.snapshot.state).toBe('IDLE');
       }
     }
   });
 
   it('INV-4: nenhuma transição chega a SUCCESS sem PAN e validade', () => {
     for (const state of CAPTURE_STATES) {
+      if (state === 'SUCCESS') continue;
       for (const event of ALL_EVENTS) {
         const result = transition(
-          at(state, { card: { ...card, pan: '' } }),
+          at(state, {}, { card: { ...card, pan: '' } }),
           event
         );
-        if (state !== 'SUCCESS') {
-          expect(result.snapshot.state).not.toBe('SUCCESS');
-        }
+        expect(result.snapshot.state).not.toBe('SUCCESS');
       }
     }
   });
 
-  it('INV-5: só WAITING_CARD inicia o timer de espera; toda saída dele o encerra', () => {
-    for (const state of CAPTURE_STATES) {
-      for (const event of ALL_EVENTS) {
-        const context = state === 'PROCESSING' ? { card } : {};
-        const result = transition(at(state, context), event);
-        if (!result.changed) continue;
-        const effects = types(result.effects);
-        if (effects.includes('START_WAIT_TIMER')) {
-          expect(result.snapshot.state).toBe('WAITING_CARD');
-        }
-        if (
-          state === 'WAITING_CARD' &&
-          result.snapshot.state !== 'WAITING_CARD'
-        ) {
-          expect(effects).toContain('CLEAR_WAIT_TIMER');
-        }
+  it('INV-5: só WAITING_CARD inicia o timer; toda saída dele o encerra', () => {
+    for (const { before, result } of everyTransition()) {
+      if (!result.changed) continue;
+      const effects = types(result.effects);
+      if (effects.includes('START_WAIT_TIMER')) {
+        expect(result.snapshot.state).toBe('WAITING_CARD');
+      }
+      if (
+        before.state === 'WAITING_CARD' &&
+        result.snapshot.state !== 'WAITING_CARD'
+      ) {
+        expect(effects).toContain('CLEAR_WAIT_TIMER');
       }
     }
   });
 
-  it('INV-3: RESOLVE só nasce de FINISH (ou desistência com NFC desligado) em estado terminal', () => {
-    for (const state of CAPTURE_STATES) {
-      for (const event of ALL_EVENTS) {
-        const result = transition(
-          at(state, state === 'SUCCESS' ? { card } : {}),
-          event
-        );
-        if (types(result.effects).includes('RESOLVE')) {
-          expect(isTerminal(state)).toBe(true);
-          expect(result.snapshot.state).toBe('IDLE');
-        }
+  it('estados terminais e IDLE nunca carregam flags de operação pendentes', () => {
+    for (const { result } of everyTransition()) {
+      if (!result.changed) continue;
+      if (
+        isTerminal(result.snapshot.state) ||
+        result.snapshot.state === 'IDLE'
+      ) {
+        expect(result.snapshot.context.cancelRequested).toBe(false);
+        expect(result.snapshot.context.pendingTag).toBe(false);
       }
     }
   });
 
-  it('eventos fora de contexto são ignorados sem efeitos (estados impossíveis não surgem)', () => {
-    const result = transition(initialSnapshot(2), {
-      type: 'READ_SUCCEEDED',
-      card,
-    });
-    expect(result).toEqual({
+  it('eventos fora de contexto são ignorados sem efeitos', () => {
+    expect(
+      transition(initialSnapshot(2), { type: 'READ_SUCCEEDED', card })
+    ).toEqual({
       snapshot: initialSnapshot(2),
       effects: [],
       changed: false,
     });
-    expect(
-      transition(at('SUCCESS', { card }), { type: 'TAG_DETECTED' }).changed
-    ).toBe(false);
+    expect(transition(at('SUCCESS'), { type: 'TAG_DETECTED' }).changed).toBe(
+      false
+    );
   });
 });
 
@@ -471,7 +568,7 @@ describe('retentativas ponta a ponta na máquina (E5-H3)', () => {
     expect(snapshot.state).toBe('WAITING_CARD');
     snapshot = failAndRetry(snapshot);
     expect(snapshot.state).toBe('ERROR');
-    expect(snapshot.context.error?.code).toBe('READ_FAILED_MAX_RETRIES');
+    expect(errorCode(snapshot)).toBe('READ_FAILED_MAX_RETRIES');
     expect(snapshot.context.attempts).toBe(3);
   });
 
@@ -481,6 +578,6 @@ describe('retentativas ponta a ponta na máquina (E5-H3)', () => {
       state: 'WAITING_CARD',
     });
     expect(snapshot.state).toBe('ERROR');
-    expect(snapshot.context.error?.code).toBe('READ_FAILED_MAX_RETRIES');
+    expect(errorCode(snapshot)).toBe('READ_FAILED_MAX_RETRIES');
   });
 });
