@@ -58,6 +58,20 @@ Estruturas complexas (o resultado da leitura do cartão) atravessam como JSON `s
 3. Se o `CashtapModule.kt` não implementar exatamente as assinaturas abstratas, **o Kotlin não compila**.
 4. Em execução, o valor que volta do nativo ainda passa por type guard no TS — o tipo é a expectativa, a validação é a verificação.
 
+## Spec alterada sem rebuild do nativo
+
+O Metro recarrega só o JavaScript. A tabela `methodMap_` (C++) e a classe `NativeCashtapSpec` (Java) estão **compiladas dentro do APK**. Se a spec muda e o app não é recompilado, o JS novo conversa com o binário antigo:
+
+| Mudança na spec | Sintoma com o APK antigo |
+|---|---|
+| Método novo | O host object não tem o método: `TypeError: module.novoMetodo is not a function`. |
+| Método removido | O JS deixa de chamar; o nativo antigo continua lá, sem efeito visível. |
+| Aridade ou tipo alterado | O C++ antigo converte os argumentos pela assinatura JNI velha: erro de conversão ou crash em tempo de execução, não erro de compilação. |
+| Novo `EventEmitter` | `module.onX is not a function` ao assinar. |
+| Módulo inteiro ausente (pacote recém-instalado, autolinking falhou) | `TurboModuleRegistry.get` devolve `null`. No Android, `src/native.ts` transforma isso em erro explícito de instalação (`LINKING_ERROR`, D010), para não ser confundido com "aparelho sem NFC". |
+
+**Regra prática:** mudou `src/NativeCashtap.ts` ou qualquer `.kt` → rebuild nativo (`yarn example android`). Reload do Metro só serve para mudanças em TS/TSX que não tocam a spec.
+
 ## Caminho de uma chamada
 
 ```

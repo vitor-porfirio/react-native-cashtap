@@ -25,9 +25,7 @@ The [example app](/example/) demonstrates usage of the library. You need to run 
 
 It is configured to use the local version of the library, so any changes you make to the library's source code will be reflected in the example app. Changes to the library's JavaScript code will be reflected in the example app without a rebuild, but native code changes will require a rebuild of the example app.
 
-If you want to use Android Studio or Xcode to edit the native code, you can open the `example/android` or `example/ios` directories respectively in those editors. To edit the Objective-C or Swift files, open `example/ios/CashtapExample.xcworkspace` in Xcode and find the source files at `Pods > Development Pods > react-native-cashtap`.
-
-To edit the Java or Kotlin files, open `example/android` in Android studio and find the source files at `react-native-cashtap` under `Android`.
+The SDK is Android-only (see `DECISIONS.md`, D002 and D008). To edit the Kotlin files, open `example/android` in Android studio and find the source files at `react-native-cashtap` under `Android`.
 
 You can use various commands from the root directory to work with the project.
 
@@ -41,18 +39,6 @@ To run the example app on Android:
 
 ```sh
 yarn example android
-```
-
-To run the example app on iOS:
-
-```sh
-yarn example ios
-```
-
-To run the example app on Web:
-
-```sh
-yarn example web
 ```
 
 Make sure your code passes TypeScript:
@@ -115,9 +101,6 @@ The `package.json` file contains various scripts for common tasks:
 - `yarn test`: run unit tests with [Jest](https://jestjs.io/).
 - `yarn example start`: start the Metro server for the example app.
 - `yarn example android`: run the example app on Android.
-- `yarn example ios`: run the example app on iOS.
-- `yarn example web`: run the example app on Web.
-- `yarn example build:web`: build the example app for Web.
 
 ### Sending a pull request
 

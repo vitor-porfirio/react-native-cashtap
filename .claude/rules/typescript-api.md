@@ -3,7 +3,7 @@
 ## Design da API
 
 - **Idioma:** identificadores em inglês (`capture`, `CaptureParams`, `status: 'success'`). Mensagens ao operador em pt-BR, centralizadas em `src/errors.ts` e nos textos padrão do tema.
-- **Superfície mínima:** `capture`, `cancel`, `getNfcStatus`, `onStateChange`, `CashTapProvider` e os tipos. Tudo o mais é interno. Cada `export` em `src/index.ts` é uma promessa pública.
+- **Superfície mínima:** `capture`, `cancel`, `getNfcStatus`, `onNfcStatusChange`, `openNfcSettings`, `onStateChange`, `CashTapProvider` e os tipos (D010). Tudo o mais é interno. Cada `export` em `src/index.ts` é uma promessa pública.
 - **Resultado discriminado:** `capture()` **nunca rejeita** por erro esperado. Resolve com `{ status: 'success' | 'cancelled' | 'timeout' | 'error', ... }`. Rejeição só para bug de programação (ex.: Provider ausente).
 - **Uniões de string, não `enum`.** Listas de valores definidas como `as const` e tipos derivados delas.
 - **Valores monetários em centavos inteiros** em toda a stack; formatação só na UI (especificação §12.3).
