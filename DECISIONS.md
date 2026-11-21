@@ -268,6 +268,32 @@ Modelo de entrada:
 
 ---
 
+## D018 — Máquina de estados: núcleo puro, runner e extensões à tabela §4.2  (2026-11-21 · F5 · #18–#22)
+
+**Contexto:** a especificação define 10 estados, a tabela de transições e INV-1..5. Alguns casos reais não estão na tabela: cartão que volta enquanto a tela de falha está aberta, cartão que volta durante a leitura (D017), cancelamento durante a verificação do NFC, e como encerrar com o NFC desligado (RN-02).
+
+**Decisão:**
+- `src/core/machine.ts` é uma função pura `transition(snapshot, event) → { snapshot, effects }`. O `CaptureSession` (runner) executa os efeitos (rádio, timer, leitura, agendamentos), descarta eventos agendados quando o estado muda e resolve a Promise exatamente uma vez (INV-3). O nativo é injetado por `NativePort` — o equivalente, no TS, do `Transceiver` do Kotlin (T18).
+- Extensões à tabela, todas testadas:
+  - `RECOVERABLE_FAILURE` + cartão detectado → `READING` (sem esperar a mensagem de falha sumir), se houver retentativa disponível.
+  - `READING` + cartão detectado → lembra "tag pendente"; se a leitura falhar de forma recuperável, lê de novo na hora (D017).
+  - `CHECKING` + cancelar → cancelamento efetivado quando o NFC responder.
+  - `ERROR(NFC_DISABLED)` não encerra sozinho: espera "verificar novamente" (`RECHECK`, também disparado quando o NFC é ligado) ou "fechar"/cancelar, que resolve com `NFC_DISABLED` (RN-02).
+  - `ERROR(NFC_UNSUPPORTED)` encerra imediatamente e a UI não abre (RN-01).
+- Falhas automaticamente recuperáveis: `CARD_REMOVED`, `PROTOCOL_ERROR`, `PARSE_ERROR` (catálogo §5). A contagem segue RN-08: com `maxRetries = N`, a falha N+1 encerra com `READ_FAILED_MAX_RETRIES`.
+- Resultado com quatro status: `success`, `cancelled`, `timeout` e `error` — expiração é desfecho distinto de erro técnico (RN-06).
+- Estados terminais ficam visíveis por um tempo antes de resolver (sucesso 1,5 s, falha 3 s, falha recuperável 1,5 s); cancelamento resolve na hora.
+- `capture()` sem `CashTapProvider` montado **rejeita** (erro de integração, não de operação); parâmetro inválido e captura concorrente **resolvem** com `INVALID_AMOUNT` / `ALREADY_RUNNING` sem acionar o rádio (RN-03, RN-04).
+- `diagnostics: true` grava transições, trocas mascaradas e tempos da última captura; `toMeasurementRow`/`measurementsToCsv` produzem as linhas do Apêndice B sem PAN.
+
+**Alternativas:**
+- *Máquina de estados no Kotlin* — descartada pela especificação §2.3.
+- *Biblioteca de statecharts (XState)* — descartada: dependência de runtime para 10 estados; a função pura é testável exaustivamente (todas as combinações estado × evento nos testes de invariantes).
+
+**Consequências:** fluxo inteiro testado sem device (fake timers + nativo simulado), incluindo timeout, retentativa, cancelamento em cada estado e cartão que sai e volta.
+
+---
+
 # Divergências spec EMV × cartão real
 
 | Data | Cartão | Esperado pela spec | Observado | Hex |
