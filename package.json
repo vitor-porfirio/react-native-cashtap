@@ -16,7 +16,6 @@
     "src",
     "lib",
     "android",
-    "react-native.config.js",
     "!android/build",
     "!android/gradle",
     "!android/gradlew",
@@ -138,7 +137,21 @@
     "modulePathIgnorePatterns": [
       "<rootDir>/example/node_modules",
       "<rootDir>/lib/"
-    ]
+    ],
+    "collectCoverageFrom": [
+      "src/**/*.{ts,tsx}",
+      "!src/**/__tests__/**",
+      "!src/NativeCashtap.ts",
+      "!src/index.ts"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "lines": 90,
+        "branches": 85,
+        "functions": 90,
+        "statements": 90
+      }
+    }
   },
   "commitlint": {
     "extends": [

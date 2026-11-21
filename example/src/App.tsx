@@ -9,16 +9,36 @@ import {
 
 export default function App() {
   const [status, setStatus] = useState<NfcStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getNfcStatus().then(setStatus);
-    return onNfcStatusChange(setStatus);
+    let active = true;
+    let receivedEvent = false;
+
+    const unsubscribe = onNfcStatusChange((next) => {
+      receivedEvent = true;
+      setStatus(next);
+    });
+    getNfcStatus()
+      .then((initial) => {
+        // Um evento que chegou antes da consulta inicial é mais recente: prevalece.
+        if (active && !receivedEvent) setStatus(initial);
+      })
+      .catch((e: unknown) => {
+        if (active) setError(e instanceof Error ? e.message : String(e));
+      });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   return (
     <View style={styles.container}>
       <Text style={styles.label}>Status do NFC</Text>
       <Text style={styles.status}>{status ?? '...'}</Text>
+      {error && <Text style={styles.error}>{error}</Text>}
       {status === 'DISABLED' && (
         <Button title="Abrir configurações" onPress={openNfcSettings} />
       )}
@@ -32,6 +52,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 12,
+    padding: 24,
   },
   label: {
     fontSize: 16,
@@ -39,5 +60,9 @@ const styles = StyleSheet.create({
   status: {
     fontSize: 28,
     fontWeight: '700',
+  },
+  error: {
+    color: '#B00020',
+    textAlign: 'center',
   },
 });
