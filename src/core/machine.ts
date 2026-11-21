@@ -131,7 +131,11 @@ const moved = (
   changed: true,
 });
 
-/** Contexto ao reiniciar a verificação ou voltar a IDLE: flags de operação limpas. */
+/**
+ * Contexto ao reiniciar a verificação ou voltar a IDLE: flags de operação limpas.
+ * Monta campo a campo de propósito (para não carregar `nfcError`): um campo novo em
+ * `MachineContext` precisa ser incluído aqui — há teste comparando as chaves.
+ */
 function cleared(context: MachineContext): MachineContext {
   return {
     maxRetries: context.maxRetries,

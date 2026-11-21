@@ -447,6 +447,11 @@ describe('NFC desligado durante a leitura (D018)', () => {
     expect(errorCode(snapshot)).toBe('NFC_DISABLED');
   });
 
+  it('segundo aviso de NFC desligado na mesma leitura é ignorado', () => {
+    const { snapshot } = run(at('READING'), off);
+    expect(transition(snapshot, off).changed).toBe(false);
+  });
+
   it('leitura que ainda assim concluiu vale', () => {
     expect(
       run(at('READING'), off, { type: 'READ_SUCCEEDED', card }).snapshot.state
@@ -508,6 +513,36 @@ describe('tag pendente (D017, D018)', () => {
 });
 
 describe('invariantes (§4.3) — varredura estado × evento × contexto', () => {
+  it('cleared() preserva exatamente os campos permanentes do contexto', () => {
+    const full: Required<MachineContext> = {
+      maxRetries: 2,
+      attempts: 1,
+      failures: 1,
+      cancelRequested: true,
+      pendingTag: true,
+      nfcError: createError('NFC_DISABLED'),
+    };
+    const { snapshot } = run(at('WAITING_CARD', full), { type: 'CANCEL' });
+    // Se um campo novo entrar em MachineContext, este teste obriga a decidir se cleared() o mantém.
+    expect(Object.keys(full).sort()).toEqual(
+      [
+        'attempts',
+        'cancelRequested',
+        'failures',
+        'maxRetries',
+        'nfcError',
+        'pendingTag',
+      ].sort()
+    );
+    expect(snapshot.context).toEqual({
+      maxRetries: 2,
+      attempts: 1,
+      failures: 1,
+      cancelRequested: false,
+      pendingTag: false,
+    });
+  });
+
   it('INV-1: toda entrada em estado terminal desliga o reader mode', () => {
     for (const { before, result } of everyTransition()) {
       if (

@@ -281,6 +281,7 @@ Modelo de entrada:
 - `READING` + cartão detectado → "tag pendente"; se a leitura falhar de forma recuperável, lê de novo na hora (D017). `CHECKING` + cartão detectado → lê assim que o NFC ficar pronto.
 - `CHECKING` + cancelar → efetivado quando o NFC responder, **qualquer** que seja a resposta (pronto ou indisponível) — quem desistiu não fica esperando.
 - `WAITING_CARD`/`RECOVERABLE_FAILURE` + NFC desligado pelo operador → `ERROR(NFC_DISABLED)` na hora, em vez de esperar o timeout.
+- `READING` + NFC desligado → guarda o erro e pede `cancelRead` (interrupção entre APDUs, D017; nunca `stopReaderMode` no meio da leitura). Precedência ao terminar a leitura: cancelamento do operador vence; senão, uma leitura que **concluiu** vale; uma que **falhou** (qualquer motivo, inclusive `CANCELLED_BY_USER` do nativo) termina em `ERROR(NFC_DISABLED)`. Se o NFC for religado antes de a leitura terminar, o erro guardado permanece: o `cancelRead` já foi enviado e a falha que vier dele não pode ser confundida com cancelamento do operador; o operador toca em "verificar novamente" (janela de poucas centenas de ms).
 - `ERROR(NFC_DISABLED)` não encerra sozinho: "verificar novamente" (`RECHECK`, também disparado quando o NFC é ligado) volta a `CHECKING` com as flags limpas; cancelar ou "fechar" resolve com `NFC_DISABLED` (RN-02). `ERROR(NFC_UNSUPPORTED)` encerra na hora e a UI não abre (RN-01).
 - **Cancelamento por estado** (#21): imediato em `WAITING_CARD` e `RECOVERABLE_FAILURE`; diferido em `CHECKING` e `READING` (RN-10); **ignorado** em `PROCESSING` e nos estados finais, porque a leitura já concluiu e o resultado é entregue — cancelar tarde não desfaz uma leitura.
 
@@ -288,6 +289,7 @@ Modelo de entrada:
 - Eventos processados em **fila**, um por vez: listener ou efeito que dispara outro evento (ex.: `cancel()` dentro de `onStateChange`) não causa reentrância nem notificação fora de ordem. Os efeitos de um evento rodam **antes** de os listeners serem notificados.
 - Exceção em listener do integrador é isolada (logada em `__DEV__`); Promise nativa rejeitada ou efeito que lança vira erro `UNKNOWN` no fluxo. A Promise de `capture()` sempre resolve (INV-3) e o SDK nunca fica preso em `ALREADY_RUNNING`.
 - A UI recebe uma **projeção** da sessão (`ActiveSession`): estado, valor, contadores, erro e cartão **mascarado**. O PAN completo só existe no resultado de `capture()` (RN-24).
+- **Duas granularidades de notificação:** a projeção da UI é publicada a **toda** mudança (inclusive só de contexto, como "cancelando…" em `READING`); `onStateChange` do integrador e o registro de diagnóstico recebem **só** trocas de estado.
 - `meta.durationMs` vai do `capture()` até a entrada no estado final — **sem** o tempo de exibição da tela final (sucesso 1,5 s, falha 3 s), para não enviesar `t_total` por desfecho. `readDurationMs` (`t_ciclo`) mede da entrada em `READING` da leitura bem-sucedida até o resultado.
 - Falhas automaticamente recuperáveis: `CARD_REMOVED`, `PROTOCOL_ERROR`, `PARSE_ERROR`. Com `maxRetries = N`, a falha N+1 encerra com `READ_FAILED_MAX_RETRIES` (RN-08).
 
@@ -311,7 +313,7 @@ stateDiagram-v2
     READING --> PROCESSING: leitura ok
     READING --> RECOVERABLE_FAILURE: cartão afastado / falha recuperável
     READING --> CANCELLED: cancelamento pendente
-    READING --> ERROR: falha fatal
+    READING --> ERROR: falha fatal / NFC desligado
     RECOVERABLE_FAILURE --> WAITING_CARD: retentativa disponível
     RECOVERABLE_FAILURE --> READING: cartão reaproximado / tag pendente
     RECOVERABLE_FAILURE --> ERROR: retentativas esgotadas / NFC desligado
