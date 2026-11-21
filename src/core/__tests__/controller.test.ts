@@ -887,3 +887,45 @@ describe('falhas síncronas do nativo (D018)', () => {
     await next;
   });
 });
+
+describe('projeção para a UI acompanha o contexto', () => {
+  it('RN-10: cancelar em READING publica cancelRequested=true na view, sem novo evento de estado', async () => {
+    const stateEvents = jest.fn();
+    onStateChange(stateEvents);
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    native.tap();
+    await flush();
+    stateEvents.mockClear();
+    cancel();
+    expect(getActiveSession()).toMatchObject({
+      state: 'READING',
+      cancelRequested: true,
+    });
+    expect(stateEvents).not.toHaveBeenCalled();
+    native.finishRead({ ok: false, code: 'CANCELLED_BY_USER', detail: '' });
+    await flush();
+    await expect(promise).resolves.toMatchObject({ status: 'cancelled' });
+  });
+
+  it('NFC desligado durante a leitura: interrompe e termina em ERROR(NFC_DISABLED), não em TIMEOUT', async () => {
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    native.tap();
+    await flush();
+    native.setNfc('DISABLED');
+    await flush();
+    expect(native.cancelRead).toHaveBeenCalled();
+    native.finishRead({ ok: false, code: 'CANCELLED_BY_USER', detail: '' });
+    await flush();
+    expect(getActiveSession()).toMatchObject({
+      state: 'ERROR',
+      error: { code: 'NFC_DISABLED' },
+    });
+    cancel();
+    await flush();
+    await expect(promise).resolves.toMatchObject({
+      error: { code: 'NFC_DISABLED' },
+    });
+  });
+});

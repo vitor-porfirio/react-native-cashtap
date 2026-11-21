@@ -19,9 +19,12 @@ export type ResolvedParams = {
   timeoutMs: number;
   maxRetries: number;
   diagnostics: boolean;
-  /** Preenchido a partir da F6 (aparência por captura). */
-  appearance?: unknown;
 };
+
+/** `reference` só é aceito como string; qualquer outra coisa é descartada. */
+export function normalizeReference(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -78,8 +81,7 @@ export function resolveParams(
     params: {
       amountCents,
       currencyCode,
-      reference:
-        typeof params.reference === 'string' ? params.reference : undefined,
+      reference: normalizeReference(params.reference),
       timeoutMs,
       maxRetries,
       diagnostics: params.diagnostics === true,

@@ -73,6 +73,8 @@ export type SessionDeps = {
 export type SessionChange = {
   previous: CaptureState;
   snapshot: MachineSnapshot;
+  /** `false` quando só o contexto mudou (ex.: cancelamento pedido em READING). */
+  stateChanged: boolean;
   timestamp: number;
 };
 
@@ -192,12 +194,15 @@ export class CaptureSession {
     for (const effect of effects) {
       this.runSafely(effect);
     }
-    if (stateChanged) {
-      try {
-        this.onChange({ previous, snapshot, timestamp: this.deps.clock.now() });
-      } catch (error) {
-        reportListenerError(error);
-      }
+    try {
+      this.onChange({
+        previous,
+        snapshot,
+        stateChanged,
+        timestamp: this.deps.clock.now(),
+      });
+    } catch (error) {
+      reportListenerError(error);
     }
   }
 
@@ -230,8 +235,20 @@ export class CaptureSession {
         error: createError('UNKNOWN', detail),
       });
     } else if (effect.type === 'RESOLVE') {
+      // INV-3 também no caminho que não deveria acontecer: resolve com UNKNOWN.
       this.settled = true;
       this.dispose();
+      this.settle?.({
+        status: 'error',
+        error: createError('UNKNOWN', detail),
+        meta: {
+          captureId: this.captureId,
+          startedAt: this.startedAtEpoch,
+          durationMs: this.deps.clock.now() - this.startedAtMono,
+          attempts: this.snapshot.context.attempts,
+          stepTimings: [],
+        },
+      });
     } else {
       reportListenerError(error);
     }

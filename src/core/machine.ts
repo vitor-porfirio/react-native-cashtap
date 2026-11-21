@@ -35,6 +35,8 @@ export type MachineContext = {
   cancelRequested: boolean;
   /** D017: cartão detectado quando ainda não dava para ler; lê assim que possível. */
   pendingTag: boolean;
+  /** NFC desligado durante uma leitura: se ela falhar, o desfecho é este erro. */
+  nfcError?: CashTapError;
 };
 
 /**
@@ -131,7 +133,13 @@ const moved = (
 
 /** Contexto ao reiniciar a verificação ou voltar a IDLE: flags de operação limpas. */
 function cleared(context: MachineContext): MachineContext {
-  return { ...context, cancelRequested: false, pendingTag: false };
+  return {
+    maxRetries: context.maxRetries,
+    attempts: context.attempts,
+    failures: context.failures,
+    cancelRequested: false,
+    pendingTag: false,
+  };
 }
 
 type TerminalEntry =
@@ -320,11 +328,28 @@ export function transition(
               delay: 'immediate',
             },
           ]);
+        case 'NFC_UNAVAILABLE':
+          // NFC desligado no meio da leitura: interrompe entre APDUs; uma leitura
+          // que ainda assim concluir vale, uma que falhar termina com este erro.
+          if (context.nfcError) return ignored(snapshot);
+          return moved(
+            {
+              state: 'READING',
+              context: { ...context, nfcError: event.error },
+            },
+            [{ type: 'CANCEL_READ' }]
+          );
         case 'READ_FAILED': {
-          if (
-            context.cancelRequested ||
-            event.error.code === 'CANCELLED_BY_USER'
-          ) {
+          if (context.cancelRequested) {
+            return enterTerminal({ state: 'CANCELLED' }, context);
+          }
+          if (context.nfcError) {
+            return enterTerminal(
+              { state: 'ERROR', error: context.nfcError },
+              context
+            );
+          }
+          if (event.error.code === 'CANCELLED_BY_USER') {
             return enterTerminal({ state: 'CANCELLED' }, context);
           }
           if (!isAutoRecoverable(event.error.code)) {

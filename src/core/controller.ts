@@ -17,7 +17,11 @@ import type {
 } from '../types';
 import { diagnosticsRecorder } from './diagnostics';
 import type { CaptureState, MachineEvent, MachineSnapshot } from './machine';
-import { resolveParams, type ResolvedParams } from './params';
+import {
+  normalizeReference,
+  resolveParams,
+  type ResolvedParams,
+} from './params';
 import {
   CaptureSession,
   DEFAULT_DISPLAY_DURATIONS,
@@ -32,8 +36,7 @@ import {
 export type ActiveSession = {
   captureId: string;
   state: CaptureState;
-  params: Pick<ResolvedParams, 'amountCents' | 'currencyCode' | 'maxRetries'> &
-    Partial<Pick<ResolvedParams, 'appearance'>>;
+  params: Pick<ResolvedParams, 'amountCents' | 'currencyCode' | 'maxRetries'>;
   attempts: number;
   failures: number;
   cancelRequested: boolean;
@@ -96,19 +99,13 @@ function errorOf(snapshot: MachineSnapshot): CashTapError | undefined {
 
 function project(session: CaptureSession): ActiveSession {
   const snapshot = session.current;
-  const { amountCents, currencyCode, maxRetries, appearance } =
-    session.settings;
+  const { amountCents, currencyCode, maxRetries } = session.settings;
   const error = errorOf(snapshot);
   const card = 'card' in snapshot ? snapshot.card : undefined;
   return {
     captureId: session.captureId,
     state: snapshot.state,
-    params: {
-      amountCents,
-      currencyCode,
-      maxRetries,
-      ...(appearance !== undefined && { appearance }),
-    },
+    params: { amountCents, currencyCode, maxRetries },
     attempts: snapshot.context.attempts,
     failures: snapshot.context.failures,
     cancelRequested: snapshot.context.cancelRequested,
@@ -160,6 +157,9 @@ function immediateFailure(
 }
 
 function notify(session: CaptureSession, change: SessionChange): void {
+  // A UI vê toda mudança (inclusive "cancelando…"); integrador e diagnóstico, só troca de estado.
+  if (active === session) publish(project(session));
+  if (!change.stateChanged) return;
   if (session.settings.diagnostics) {
     diagnosticsRecorder.transition(change.snapshot.state, change.timestamp);
   }
@@ -173,7 +173,6 @@ function notify(session: CaptureSession, change: SessionChange): void {
     timestamp: change.timestamp,
   };
   stateListeners.forEach((listener) => safely(() => listener(event)));
-  if (active === session) publish(project(session));
 }
 
 /**
@@ -189,8 +188,7 @@ export async function capture(params: CaptureParams): Promise<CaptureResult> {
     );
   }
   const captureId = nextCaptureId();
-  const reference =
-    typeof params?.reference === 'string' ? params.reference : undefined;
+  const reference = normalizeReference(params?.reference);
   if (active) {
     return immediateFailure(
       captureId,

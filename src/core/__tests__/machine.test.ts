@@ -422,6 +422,46 @@ describe('NFC indisponível (RN-01, RN-02, D018)', () => {
   });
 });
 
+describe('NFC desligado durante a leitura (D018)', () => {
+  const off: MachineEvent = {
+    type: 'NFC_UNAVAILABLE',
+    error: createError('NFC_DISABLED'),
+  };
+
+  it('pede o cancelamento da leitura e guarda o erro', () => {
+    const { snapshot, effects } = run(at('READING'), off);
+    expect(snapshot.state).toBe('READING');
+    expect(snapshot.context.nfcError?.code).toBe('NFC_DISABLED');
+    expect(types(effects)).toEqual(['CANCEL_READ']);
+  });
+
+  it.each([
+    ['falha recuperável', createError('CARD_REMOVED')],
+    ['cancelamento do nativo', createError('CANCELLED_BY_USER')],
+  ])('%s depois disso termina em ERROR(NFC_DISABLED)', (_, error) => {
+    const { snapshot } = run(at('READING'), off, {
+      type: 'READ_FAILED',
+      error,
+    });
+    expect(snapshot.state).toBe('ERROR');
+    expect(errorCode(snapshot)).toBe('NFC_DISABLED');
+  });
+
+  it('leitura que ainda assim concluiu vale', () => {
+    expect(
+      run(at('READING'), off, { type: 'READ_SUCCEEDED', card }).snapshot.state
+    ).toBe('PROCESSING');
+  });
+
+  it('cancelamento do operador continua vencendo', () => {
+    const { snapshot } = run(at('READING'), { type: 'CANCEL' }, off, {
+      type: 'READ_FAILED',
+      error: createError('CANCELLED_BY_USER'),
+    });
+    expect(snapshot.state).toBe('CANCELLED');
+  });
+});
+
 describe('tag pendente (D017, D018)', () => {
   it('cartão reaproximado durante a leitura é lembrado, sem nova leitura concorrente', () => {
     const { snapshot, effects } = run(at('READING'), { type: 'TAG_DETECTED' });
@@ -529,6 +569,7 @@ describe('invariantes (§4.3) — varredura estado × evento × contexto', () =>
       ) {
         expect(result.snapshot.context.cancelRequested).toBe(false);
         expect(result.snapshot.context.pendingTag).toBe(false);
+        expect(result.snapshot.context.nfcError).toBeUndefined();
       }
     }
   });
