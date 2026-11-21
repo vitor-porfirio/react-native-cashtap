@@ -51,7 +51,7 @@ O fluxo completo de leitura só fica acessível pela UI do SDK a partir da F6. E
 | 2.11 | Cancelar a cobrança e aproximar o cartão logo depois | Nada acontece (nenhum evento após desligar o reader mode) | |
 | 2.12 | Iniciar e cancelar duas cobranças seguidas, rapidamente | Sem crash; a terceira cobrança funciona normalmente | |
 | 2.13 | Afastar e reaproximar o cartão em menos de 1 s durante a leitura | A leitura conclui na reaproximação, sem esperar o timeout (D017) | |
-| 2.14 | Exportar o diagnóstico de uma leitura Visa e de uma Mastercard e anexar nas issues #11/#13 | Viram vetores de teste reais (PAN já mascarado) em `Fixtures.kt` | |
+| 2.14 | Exportar o diagnóstico de uma leitura Visa e de uma Mastercard e anexar nas issues #11/#13 | Estrutura real dos cartões. Para virar vetor em `Fixtures.kt`, os `**` são trocados por valores sintéticos (PAN de teste), preservando tag e comprimento | |
 
 Issues: #8 (2.1, 2.7, 2.10–2.12), #9 (2.1, 2.6, 2.8, 2.13), #11 e #13 (2.3, 2.4, 2.14), #14 e #15 (2.3), #16 e #17 (2.1, 2.2, 2.9), #23 (2.5). #6, #10 e #12 são cobertas por testes unitários.
 

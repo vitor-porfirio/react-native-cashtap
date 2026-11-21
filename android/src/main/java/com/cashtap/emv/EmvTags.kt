@@ -59,6 +59,9 @@ object EmvTags {
    * em claro. Toda outra primitiva é mascarada — inclusive tags que o SDK não conhece.
    * Denylist não serve: o certificado do ICC (9F46), por exemplo, carrega o PAN
    * recuperável com chaves públicas.
+   *
+   * ATENÇÃO: incluir uma tag aqui exige revisão de segurança (Tech Lead) e registro
+   * no DECISIONS.md. Na dúvida, não inclua: esquecer uma tag só esconde informação.
    */
   val DIAGNOSTIC_CLEAR: Set<Int> = setOf(
     DF_NAME, AID, APPLICATION_LABEL, PRIORITY_INDICATOR, PDOL,

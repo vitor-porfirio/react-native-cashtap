@@ -78,8 +78,8 @@ class ApduTest {
 
   @Test
   fun `resposta separa dados e status word`() {
-    val response = ResponseApdu("6F02840F9000".hexToBytes())
-    assertArrayEquals("6F02840F".hexToBytes(), response.data)
+    val response = ResponseApdu("6F0284009000".hexToBytes())
+    assertArrayEquals("6F028400".hexToBytes(), response.data)
     assertEquals(0x90, response.sw1)
     assertEquals(0x00, response.sw2)
     assertTrue(response.isSuccess)

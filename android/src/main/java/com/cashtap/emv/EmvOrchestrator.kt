@@ -63,14 +63,20 @@ class EmvOrchestrator(
 
   private class Candidate(val aid: ByteArray, val label: String?, val priority: Int)
 
-  private class SelectedApplication(val aid: ByteArray, val label: String?, val pdol: ByteArray?)
+  private class SelectedApplication(
+    val aid: ByteArray,
+    val brand: CardBrand,
+    val label: String?,
+    val pdol: ByteArray?,
+  )
+
+  /** Só para testes: recebe tudo que foi zerado, antes de as listas serem descartadas (RN-26). */
+  internal var wipeObserver: ((buffers: List<ByteArray>, tlvs: List<Tlv>) -> Unit)? = null
 
   fun read(): CardReadResult {
     durations.clear()
     try {
       val (application, gpoTlvs) = selectAndInitiate()
-      val brand = AidRegistry.brandOf(application.aid)
-        ?: throw EmvException(EmvError.UNSUPPORTED_BRAND, "AID fora do registro")
       val allTlvs = gpoTlvs + readRecords(gpoTlvs)
 
       val card = CardDataExtractor.extract(allTlvs)
@@ -78,7 +84,7 @@ class EmvOrchestrator(
         pan = card.pan,
         panMasked = Masking.maskPan(card.pan),
         expiry = card.expiry,
-        brand = brand,
+        brand = application.brand,
         aid = application.aid.toHex(),
         applicationLabel = application.label,
         panSequenceNumber = card.panSequenceNumber,
@@ -88,8 +94,9 @@ class EmvOrchestrator(
     } finally {
       // RN-26: strings JVM são imutáveis; os bytes, não.
       rawBuffers.forEach { it.fill(0) }
-      rawBuffers.clear()
       parsedTlvs.forEach(Tlv::wipe)
+      wipeObserver?.invoke(rawBuffers.toList(), parsedTlvs.toList())
+      rawBuffers.clear()
       parsedTlvs.clear()
     }
   }
@@ -172,7 +179,10 @@ class EmvOrchestrator(
     val aid = fci.find(EmvTags.DF_NAME)?.value?.takeIf { AidRegistry.brandOf(it) != null }?.copyOf()
       ?: candidate.aid
     val label = fci.find(EmvTags.APPLICATION_LABEL)?.value?.let(::ascii) ?: candidate.label
-    return SelectedApplication(aid, label, fci.find(EmvTags.PDOL)?.value?.copyOf())
+    // Candidatas vêm sempre do registro (PPSE filtrado ou fallback): a bandeira existe (RN-20).
+    val brand = AidRegistry.brandOf(aid)
+      ?: throw EmvException(EmvError.UNSUPPORTED_BRAND, "AID fora do registro")
+    return SelectedApplication(aid, brand, label, fci.find(EmvTags.PDOL)?.value?.copyOf())
   }
 
   private fun getProcessingOptions(pdol: ByteArray?): ResponseApdu {

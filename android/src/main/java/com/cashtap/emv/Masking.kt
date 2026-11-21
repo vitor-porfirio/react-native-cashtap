@@ -26,7 +26,11 @@ object Masking {
     } catch (_: EmvException) {
       return "<${data.size} bytes não interpretados>"
     }
-    return buildString { tlvs.forEach { render(it, this) } }
+    return try {
+      buildString { tlvs.forEach { render(it, this) } }
+    } finally {
+      tlvs.forEach(Tlv::wipe) // RN-26: a cópia decodificada aqui também tinha dado do cartão.
+    }
   }
 
   private fun render(tlv: Tlv, out: StringBuilder) {

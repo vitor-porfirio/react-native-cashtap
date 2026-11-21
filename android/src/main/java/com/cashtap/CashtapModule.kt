@@ -189,7 +189,9 @@ class CashtapModule(reactContext: ReactApplicationContext) :
     cancelRequested.set(true)
     session.destroy()
     nfcStateMonitor.stop()
-    ioExecutor.shutdownNow()
+    // shutdown (não shutdownNow): uma leitura já enfileirada ainda roda, vê o
+    // cancelamento antes do 1º APDU e rejeita a Promise em vez de deixá-la pendente.
+    ioExecutor.shutdown()
     super.invalidate()
   }
 

@@ -203,9 +203,30 @@ class EmvOrchestratorTest {
   // ---- GPO ----
 
   @Test
-  fun `GPO recusado é PROTOCOL_ERROR`() {
-    val card = FakeTransceiver.visa().onPrefix("80A80000", "6985")
+  fun `RN-15 - GPO com SW de erro fora da lista de retentativa é PROTOCOL_ERROR`() {
+    val card = FakeTransceiver.visa().onPrefix("80A80000", "6A80")
     assertError(EmvError.PROTOCOL_ERROR) { orchestrator(card).read() }
+  }
+
+  @Test
+  fun `RN-15 - GPO com dados válidos mas SW de alerta (6283) não é sucesso`() {
+    val card = FakeTransceiver.visa().onPrefix("80A80000", Fixtures.VISA_GPO + "6283")
+    assertError(EmvError.PROTOCOL_ERROR) { orchestrator(card).read() }
+  }
+
+  @Test
+  fun `D017 - GPO 6984, 6985 e 6986 tentam a próxima aplicação`() {
+    listOf("6984", "6985", "6986").forEach { sw ->
+      val ppse = c(
+        "6F",
+        c("A5", c("BF0C", c("61", p("4F", Fixtures.VISA_AID), p("87", "01")), c("61", p("4F", Fixtures.MASTERCARD_AID), p("87", "02")))),
+      )
+      val card = FakeTransceiver.mastercard()
+        .on(Commands.selectByName(Commands.PPSE_NAME), ppse + Fixtures.OK)
+        .on(Commands.selectByName(Fixtures.VISA_AID.hexToBytes()), Fixtures.VISA_SELECT + Fixtures.OK)
+        .onPrefix("80A800002383", sw)
+      assertEquals("SW $sw", CardBrand.MASTERCARD, orchestrator(card).read().brand)
+    }
   }
 
   @Test
@@ -354,6 +375,26 @@ class EmvOrchestratorTest {
     orchestrator(card).read()
     assertTrue(card.returned.isNotEmpty())
     assertTrue(card.returned.all { buffer -> buffer.all { it == 0.toByte() } })
+  }
+
+  @Test
+  fun `RN-26 - TLVs decodificados e buffers do GET RESPONSE também são zerados`() {
+    val record = Fixtures.MASTERCARD_RECORD_2_1
+    val rest = record.substring(10)
+    val card = mastercardWithDataOnlyIn21()
+      .on(Commands.readRecord(2, 1), record.substring(0, 10) + "61%02X".format(rest.length / 2))
+      .on(Commands.getResponse(rest.length / 2), rest + Fixtures.OK)
+    var buffers: List<ByteArray> = emptyList()
+    var tlvs: List<Tlv> = emptyList()
+    orchestrator(card).apply { wipeObserver = { b, t -> buffers = b; tlvs = t } }.read()
+
+    fun allZero(t: Tlv): Boolean =
+      t.value.all { it == 0.toByte() } && t.header.all { it == 0.toByte() } && t.children.all(::allZero)
+    assertTrue(tlvs.isNotEmpty())
+    assertTrue("TLVs decodificados", tlvs.all(::allZero))
+    // inclui os buffers montados por GET RESPONSE, que não vêm do transceiver
+    assertTrue(buffers.size > card.returned.size)
+    assertTrue("buffers", buffers.all { b -> b.all { it == 0.toByte() } })
   }
 
   @Test

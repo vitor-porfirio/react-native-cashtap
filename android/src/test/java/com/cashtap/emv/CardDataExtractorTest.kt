@@ -77,6 +77,11 @@ class CardDataExtractorTest {
   }
 
   @Test
+  fun `PAN com menos de 12 dígitos é PARSE_ERROR mesmo com Luhn válido`() {
+    assertError(EmvError.PARSE_ERROR, c("70", p("57", "41111111112D2512201F")))
+  }
+
+  @Test
   fun `PAN com dígito não decimal é PARSE_ERROR`() {
     assertError(EmvError.PARSE_ERROR, c("70", p("5A", "47617390010100AB"), p("5F24", "251231")))
   }

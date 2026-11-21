@@ -31,9 +31,15 @@ class HexTest {
     "9G".hexToBytes()
   }
 
-  @Test(expected = IllegalArgumentException::class)
-  fun `rejeita dígito não ASCII que Character digit aceitaria`() {
-    "\u0663\u0663".hexToBytes() // dígito árabe-índico
+  @Test
+  fun `rejeita dígito não ASCII que Character digit aceitaria, em qualquer nibble`() {
+    listOf("\u06630", "0\u0663").forEach { hex ->
+      try {
+        hex.hexToBytes()
+        org.junit.Assert.fail("deveria rejeitar $hex")
+      } catch (_: IllegalArgumentException) {
+      }
+    }
   }
 
   @Test

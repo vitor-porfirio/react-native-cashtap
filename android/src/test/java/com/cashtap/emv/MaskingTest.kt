@@ -88,6 +88,14 @@ class MaskingTest {
   }
 
   @Test
+  fun `RN-26 - a cópia decodificada para o diagnóstico é zerada (não altera a entrada)`() {
+    val data = Fixtures.VISA_GPO.hexToBytes()
+    val copy = data.copyOf()
+    Masking.maskResponseData(data)
+    assertTrue("entrada pertence ao chamador e não é tocada", data.contentEquals(copy))
+  }
+
+  @Test
   fun `resposta vazia vira string vazia`() {
     assertEquals("", Masking.maskResponseData(ByteArray(0)))
   }
