@@ -1,0 +1,146 @@
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { AccessibilityInfo, Animated, Easing } from 'react-native';
+
+/**
+ * Easings como constantes de módulo: `Easing.out(...)` cria uma função nova a cada
+ * chamada e, nas dependências de `useLoop`, reiniciaria a animação a cada render.
+ */
+export const EASE_OUT_QUAD = Easing.out(Easing.quad);
+export const EASE_IN_OUT_CUBIC = Easing.inOut(Easing.cubic);
+const EASE_OUT_CUBIC = Easing.out(Easing.cubic);
+
+const ReduceMotionContext = createContext(false);
+
+/**
+ * Consulta "Remover animações" uma única vez, no host do modal (montado com o Provider,
+ * bem antes da primeira captura), e distribui a todas as views.
+ */
+export function ReduceMotionProvider({ children }: { children: ReactNode }) {
+  const reduce = useSystemReduceMotion();
+  return (
+    <ReduceMotionContext.Provider value={reduce}>
+      {children}
+    </ReduceMotionContext.Provider>
+  );
+}
+
+/** Respeita "Remover animações" do Android: loops viram estado estático. */
+export function useReduceMotion(): boolean {
+  return useContext(ReduceMotionContext);
+}
+
+function useSystemReduceMotion(): boolean {
+  const [reduce, setReduce] = useState(false);
+  useEffect(() => {
+    let active = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((value) => {
+        if (active) setReduce(value);
+      })
+      .catch(() => undefined);
+    const subscription = AccessibilityInfo.addEventListener(
+      'reduceMotionChanged',
+      setReduce
+    );
+    return () => {
+      active = false;
+      subscription.remove();
+    };
+  }, []);
+  return reduce;
+}
+
+/** Valor 0 → 1 em loop. `delay` defasa o início (ondas de aproximação). */
+export function useLoop(
+  duration: number,
+  options: {
+    delay?: number;
+    enabled?: boolean;
+    easing?: (t: number) => number;
+  } = {}
+) {
+  const { delay = 0, enabled = true, easing = Easing.linear } = options;
+  const value = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!enabled) {
+      value.setValue(0);
+      return;
+    }
+    const animation = Animated.sequence([
+      Animated.delay(delay),
+      Animated.loop(
+        Animated.timing(value, {
+          toValue: 1,
+          duration,
+          easing,
+          useNativeDriver: true,
+        })
+      ),
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [value, duration, delay, enabled, easing]);
+  return value;
+}
+
+/** Valor 0 → 1 uma vez ao montar (entrada, pop, desenho). */
+export function useEntrance(
+  duration: number,
+  options: { delay?: number; enabled?: boolean; spring?: boolean } = {}
+) {
+  const { delay = 0, enabled = true, spring = false } = options;
+  const value = useRef(new Animated.Value(enabled ? 0 : 1)).current;
+  useEffect(() => {
+    if (!enabled) {
+      value.setValue(1);
+      return;
+    }
+    const animation = spring
+      ? Animated.sequence([
+          Animated.delay(delay),
+          Animated.spring(value, {
+            toValue: 1,
+            damping: 12,
+            stiffness: 180,
+            useNativeDriver: true,
+          }),
+        ])
+      : Animated.timing(value, {
+          toValue: 1,
+          duration,
+          delay,
+          easing: EASE_OUT_CUBIC,
+          useNativeDriver: true,
+        });
+    animation.start();
+    return () => animation.stop();
+  }, [value, duration, delay, enabled, spring]);
+  return value;
+}
+
+/** Tremida horizontal ±7 dp, 2 ciclos (falha / erro). */
+export function useShake(enabled = true) {
+  const value = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!enabled) return;
+    const step = (toValue: number) =>
+      Animated.timing(value, { toValue, duration: 62, useNativeDriver: true });
+    const animation = Animated.sequence([
+      step(-7),
+      step(7),
+      step(-7),
+      step(7),
+      step(0),
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [value, enabled]);
+  return value;
+}

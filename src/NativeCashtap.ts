@@ -49,6 +49,8 @@ export interface Spec extends TurboModule {
    * `amountCents`: inteiro em centavos. `currencyCode`: ISO 4217 numérico com
    * 4 dígitos (ex.: "0986"); outro formato rejeita com UNKNOWN sem tocar no rádio.
    * Leitura concorrente rejeita com UNKNOWN e detail `READ_IN_PROGRESS`.
+   * `onDiagnostic` é emitido a cada comando em qualquer caso (progresso por etapa);
+   * com `diagnostics` falso, `command` e `response` chegam vazios.
    */
   readCard(
     amountCents: number,

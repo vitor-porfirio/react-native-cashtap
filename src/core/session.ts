@@ -109,6 +109,8 @@ export class CaptureSession {
   private readStartedAt: number | null = null;
   private readDurationMs: number | undefined;
   private outcomeAt: number | null = null;
+  private readonly stepsDone = new Set<string>();
+  private nfcChecked = false;
 
   constructor(
     readonly captureId: string,
@@ -127,6 +129,16 @@ export class CaptureSession {
     return this.params;
   }
 
+  /** Etapas do diálogo concluídas (SW 9000) na leitura atual, para a barra de progresso. */
+  get progress(): number {
+    return this.stepsDone.size;
+  }
+
+  /** A verificação inicial do NFC já terminou (a sessão saiu de CHECKING ao menos uma vez). */
+  get hasCheckedNfc(): boolean {
+    return this.nfcChecked;
+  }
+
   start(): Promise<CaptureResult> {
     const promise = new Promise<CaptureResult>((resolve) => {
       this.settle = resolve;
@@ -138,6 +150,9 @@ export class CaptureSession {
         this.deps.native.onTagDetected(() =>
           this.dispatch({ type: 'TAG_DETECTED' })
         )
+      );
+      this.subscriptions.push(
+        this.deps.native.onDiagnostic((exchange) => this.onProgress(exchange))
       );
       this.subscriptions.push(
         this.deps.native.onNfcStatusChange((status) => {
@@ -206,9 +221,29 @@ export class CaptureSession {
     }
   }
 
+  private onProgress(exchange: DiagnosticExchange): void {
+    if (this.settled || this.snapshot.state !== 'READING') return;
+    if (exchange.sw !== '9000' || this.stepsDone.has(exchange.step)) return;
+    this.stepsDone.add(exchange.step);
+    try {
+      this.onChange({
+        previous: this.snapshot.state,
+        snapshot: this.snapshot,
+        stateChanged: false,
+        timestamp: this.deps.clock.now(),
+      });
+    } catch (error) {
+      reportListenerError(error);
+    }
+  }
+
   private trackTimes(state: CaptureState): void {
     const now = this.deps.clock.now();
-    if (state === 'READING') this.readStartedAt = now;
+    if (state !== 'CHECKING' && state !== 'IDLE') this.nfcChecked = true;
+    if (state === 'READING') {
+      this.readStartedAt = now;
+      this.stepsDone.clear();
+    }
     // Duração da captura vai até o desfecho, sem o tempo de exibição da tela final.
     if (isTerminal(state)) this.outcomeAt = now;
   }
@@ -293,6 +328,8 @@ export class CaptureSession {
           .readCard(
             this.params.amountCents,
             this.params.currencyCode.padStart(4, '0'),
+            // O nativo sempre emite etapa e SW (progresso da UI); comando e resposta, só
+            // com diagnóstico ligado (minimização — D019).
             this.params.diagnostics
           )
           .then(

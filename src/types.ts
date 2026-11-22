@@ -38,6 +38,8 @@ export type CaptureParams = {
   maxRetries?: number;
   /** Registra transições, tempos e comandos (mascarados) para o painel de diagnóstico (E7-H3). */
   diagnostics?: boolean;
+  /** Aparência só desta captura; sobrepõe a do `CashTapProvider` (E6-H3). */
+  appearance?: CashTapAppearance;
 };
 
 /** Dados do cartão, já normalizados. */
@@ -94,4 +96,87 @@ export type CaptureStateEvent = {
   error?: CashTapError;
   /** Relógio monotônico, em ms. */
   timestamp: number;
+};
+
+// ---- Aparência (E6-H3) ----
+
+export type CashTapColors = {
+  primary: string;
+  primaryStrong: string;
+  primarySoft: string;
+  onPrimary: string;
+  /** Fundo da folha do modal. */
+  background: string;
+  /** Véu sobre o app hospedeiro. */
+  scrim: string;
+  /** Superfície translúcida (botões secundários, chips, cartões). */
+  surface: string;
+  surfaceStrong: string;
+  border: string;
+  /** Traço de ilustrações (silhueta do celular). */
+  line: string;
+  text: string;
+  textMuted: string;
+  success: string;
+  successSoft: string;
+  onSuccess: string;
+  error: string;
+  errorSoft: string;
+  warning: string;
+  warningSoft: string;
+  onWarning: string;
+  /** Cartão ilustrado. */
+  card: string;
+};
+
+export type CashTapTexts = {
+  brandName: string;
+  secureBadge: string;
+  amountLabel: string;
+  checkingTitle: string;
+  checkingHint: string;
+  waitingTitle: string;
+  waitingHint: string;
+  waitingRetryHint: string;
+  readingTitle: string;
+  readingHint: string;
+  /** Rótulos das quatro etapas da barra de progresso da leitura. */
+  stepConnect: string;
+  stepApplication: string;
+  stepAuthorize: string;
+  stepRecords: string;
+  cancelling: string;
+  recoverableTitle: string;
+  processingTitle: string;
+  processingHint: string;
+  successTitle: string;
+  successHint: string;
+  timeoutTitle: string;
+  /** `{seconds}` é substituído. */
+  timeoutHint: string;
+  errorTitle: string;
+  unsupportedBrandTitle: string;
+  nfcDisabledTitle: string;
+  nfcDisabledHint: string;
+  cancel: string;
+  close: string;
+  openSettings: string;
+  recheck: string;
+  /** `{current}` e `{total}` são substituídos. */
+  attempt: string;
+  expiryLabel: string;
+};
+
+/** Aparência informada pelo integrador: tudo opcional, mesclado sobre o padrão. */
+export type CashTapAppearance = {
+  /** Base: `'dark'` (padrão) ou `'light'`. */
+  mode?: 'dark' | 'light';
+  /** Ao trocar só `primary`, `text`, `background`, `success` ou `error`, as variações são derivadas. */
+  colors?: Partial<CashTapColors>;
+  fontFamily?: string;
+  /** Raio de botões e cartões; a folha usa o dobro. */
+  borderRadius?: number;
+  texts?: Partial<CashTapTexts>;
+  /** Vibração nas trocas de estado. Padrão: `true`. */
+  haptics?: boolean;
 };

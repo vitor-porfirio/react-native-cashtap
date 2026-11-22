@@ -139,7 +139,8 @@ class CashtapModule(reactContext: ReactApplicationContext) :
         transceiver = transceiver,
         terminal = terminal,
         logger = AndroidLogger,
-        diagnostics = if (diagnostics) ::emitDiagnostic else null,
+        // O progresso da UI precisa só de etapa e SW; bytes (já mascarados) só com diagnóstico ligado.
+        diagnostics = { exchange -> emitDiagnostic(exchange, includeBytes = diagnostics) },
         isCancelled = cancelRequested::get,
       ).read()
       return result.toJson()
@@ -148,12 +149,12 @@ class CashtapModule(reactContext: ReactApplicationContext) :
     }
   }
 
-  private fun emitDiagnostic(exchange: ApduExchange) {
+  private fun emitDiagnostic(exchange: ApduExchange, includeBytes: Boolean) {
     emitOnDiagnostic(
       Arguments.createMap().apply {
         putString("step", exchange.step.name)
-        putString("command", exchange.command)
-        putString("response", exchange.response)
+        putString("command", if (includeBytes) exchange.command else "")
+        putString("response", if (includeBytes) exchange.response else "")
         putString("sw", exchange.sw)
         putDouble("durationMs", exchange.durationMs)
       }

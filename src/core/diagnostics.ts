@@ -1,6 +1,23 @@
+import type { ErrorCode } from '../errors';
 import type { DiagnosticExchange } from '../native';
-import type { CaptureResult, StepTiming, Unsubscribe } from '../types';
+import type { CaptureResult, EmvStep, StepTiming, Unsubscribe } from '../types';
 import type { CaptureState } from './machine';
+
+/**
+ * Troca de comando com o cartão, como aparece no relatório. Tipo público próprio,
+ * desacoplado do contrato do Turbo Module: mudar a ponte não quebra o integrador.
+ */
+export type DiagnosticsExchange = {
+  step: EmvStep;
+  /** Comando enviado, em hexadecimal. Só carrega dados do terminal. */
+  command: string;
+  /** Resposta do cartão, já mascarada na origem (allowlist, D016). */
+  response: string;
+  sw: string;
+  durationMs: number;
+  /** Instante relativo ao início da captura. */
+  atMs: number;
+};
 
 /**
  * Registro da última captura feita com `diagnostics: true` (E7-H3).
@@ -10,10 +27,13 @@ export type DiagnosticsReport = {
   captureId: string;
   startedAt: number;
   transitions: Array<{ state: CaptureState; atMs: number }>;
-  exchanges: Array<DiagnosticExchange & { atMs: number }>;
+  exchanges: DiagnosticsExchange[];
   outcome?: CaptureResult['status'];
-  errorCode?: string;
+  errorCode?: ErrorCode;
   stepTimings: StepTiming[];
+  /** Duração total da captura (t_total). */
+  durationMs?: number;
+  /** Da detecção do cartão ao resultado da leitura (t_ciclo). */
   readDurationMs?: number;
   cryptogramPresent?: boolean;
 };
@@ -51,7 +71,17 @@ export const diagnosticsRecorder = {
     if (!current) return;
     current = {
       ...current,
-      exchanges: [...current.exchanges, { ...exchange, atMs: now - origin }],
+      exchanges: [
+        ...current.exchanges,
+        {
+          step: exchange.step,
+          command: exchange.command,
+          response: exchange.response,
+          sw: exchange.sw,
+          durationMs: exchange.durationMs,
+          atMs: now - origin,
+        },
+      ],
     };
     emit();
   },
@@ -62,6 +92,7 @@ export const diagnosticsRecorder = {
       outcome: result.status,
       ...('error' in result && { errorCode: result.error.code }),
       stepTimings: result.meta.stepTimings,
+      durationMs: result.meta.durationMs,
       readDurationMs: result.meta.readDurationMs,
       cryptogramPresent: result.meta.cryptogramPresent,
     };
@@ -92,6 +123,7 @@ export function diagnosticsToText(report: DiagnosticsReport): string {
   const lines = [
     `captura ${report.captureId} — início ${new Date(report.startedAt).toISOString()}`,
     `desfecho: ${report.outcome ?? 'em andamento'}${report.errorCode ? ` (${report.errorCode})` : ''}`,
+    `tempo total: ${report.durationMs === undefined ? '—' : `${report.durationMs.toFixed(0)} ms`} · leitura: ${report.readDurationMs === undefined ? '—' : `${report.readDurationMs.toFixed(0)} ms`}`,
     `criptograma retornado: ${report.cryptogramPresent === undefined ? '—' : report.cryptogramPresent ? 'sim' : 'não'}`,
     '',
     'transições:',
