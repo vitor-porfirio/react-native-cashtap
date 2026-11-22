@@ -210,6 +210,12 @@ const FAILURES = {
   },
 };
 
+/** Erros que uma nova tentativa não resolve: trocar de aparelho ou de valor. */
+const NO_RETRY: ReadonlySet<string> = new Set([
+  'NFC_UNSUPPORTED',
+  'INVALID_AMOUNT',
+]);
+
 const ERROR_TITLES: Partial<Record<string, string>> = {
   UNSUPPORTED_BRAND: 'Cartão não aceito',
   NFC_UNSUPPORTED: 'Aparelho sem NFC',
@@ -235,8 +241,7 @@ function FailureView({
     result.status !== 'error'
       ? look.title
       : (ERROR_TITLES[result.error.code] ?? look.title);
-  // Repetir só faz sentido se o problema pode mudar sem trocar de aparelho ou de valor.
-  const canRetry = !(code in ERROR_TITLES) || code === 'UNSUPPORTED_BRAND';
+  const canRetry = !NO_RETRY.has(code);
   const message =
     result.status === 'cancelled'
       ? 'A leitura foi cancelada pelo operador antes da conclusão.'

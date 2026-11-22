@@ -1,3 +1,4 @@
+import type { ErrorCode } from '../errors';
 import type { DiagnosticExchange } from '../native';
 import type { CaptureResult, EmvStep, StepTiming, Unsubscribe } from '../types';
 import type { CaptureState } from './machine';
@@ -28,7 +29,7 @@ export type DiagnosticsReport = {
   transitions: Array<{ state: CaptureState; atMs: number }>;
   exchanges: DiagnosticsExchange[];
   outcome?: CaptureResult['status'];
-  errorCode?: string;
+  errorCode?: ErrorCode;
   stepTimings: StepTiming[];
   /** Duração total da captura (t_total). */
   durationMs?: number;
