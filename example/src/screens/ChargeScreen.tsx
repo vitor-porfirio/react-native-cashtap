@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   capture,
   getNfcStatus,
@@ -61,6 +61,7 @@ export function ChargeScreen({
   const [amount, setAmount] = useState(initialAmountCents);
   const [busy, setBusy] = useState(false);
   const [nfc, setNfc] = useState<NfcStatus | null>(null);
+  const [integrationError, setIntegrationError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -81,12 +82,21 @@ export function ChargeScreen({
       return Math.min(next, MAX_CENTS);
     });
 
-  // A integração inteira com o SDK é esta chamada.
+  // A integração inteira com o SDK é esta chamada. Ela só rejeita por erro de
+  // integração (Provider ausente, módulo nativo não instalado), nunca por falha de leitura.
   const charge = async () => {
     setBusy(true);
-    const result = await capture({ amountCents: amount, diagnostics: true });
-    setBusy(false);
-    onResult(result, amount);
+    setIntegrationError(null);
+    try {
+      const result = await capture({ amountCents: amount, diagnostics: true });
+      onResult(result, amount);
+    } catch (error) {
+      setIntegrationError(
+        error instanceof Error ? error.message : String(error)
+      );
+    } finally {
+      setBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -162,10 +172,13 @@ export function ChargeScreen({
         ))}
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.flexGrow}
-        scrollEnabled={false}
-      />
+      <View style={styles.flex}>
+        {integrationError && (
+          <Text style={styles.integrationError} testID="integration-error">
+            {integrationError}
+          </Text>
+        )}
+      </View>
 
       {amount > 0 ? (
         <PrimaryButton
@@ -249,7 +262,12 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   flex: { flex: 1 },
-  flexGrow: { flexGrow: 1 },
+  integrationError: {
+    color: c.error,
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: 12,
+  },
   header: { flexDirection: 'row', alignItems: 'center', gap: 12, height: 52 },
   logo: {
     width: 40,

@@ -28,8 +28,9 @@ type Props = {
 type Success = Extract<CaptureResult, { status: 'success' }>;
 
 /**
- * O que este app enviaria ao próprio backend. Na tela o número aparece mascarado
- * (LGPD: nenhum número completo em capturas de tela — TCC §2.3.3).
+ * Prévia do que este app enviaria ao próprio backend. Um backend real recebe
+ * `result.card.pan` (número completo, por canal seguro); a prévia mostra só o
+ * mascarado (LGPD: nenhum número completo em capturas de tela — TCC §2.3.3).
  */
 function backendPayload(result: Success, amountCents: number) {
   return {
@@ -38,16 +39,17 @@ function backendPayload(result: Success, amountCents: number) {
     currency: 'BRL',
     card: {
       brand: result.card.brand,
-      pan: result.card.panMasked,
+      panMasked: result.card.panMasked,
       expiry: formatExpiry(result.card.expiry),
       ...(result.card.panSequenceNumber && {
         sequence: result.card.panSequenceNumber,
       }),
     },
     attempts: result.meta.attempts,
-    readDurationMs: Math.round(
-      result.meta.readDurationMs ?? result.meta.durationMs
-    ),
+    durationMs: Math.round(result.meta.durationMs),
+    ...(result.meta.readDurationMs !== undefined && {
+      readDurationMs: Math.round(result.meta.readDurationMs),
+    }),
     capturedAt: new Date(result.meta.startedAt).toISOString(),
   };
 }
@@ -139,7 +141,9 @@ function SuccessView({
           <Glass style={styles.metric}>
             <Text style={styles.muted}>Duração da leitura</Text>
             <Text style={styles.metricValue}>
-              {formatMs(result.meta.readDurationMs ?? result.meta.durationMs)}
+              {result.meta.readDurationMs === undefined
+                ? '—'
+                : formatMs(result.meta.readDurationMs)}
             </Text>
           </Glass>
           <Glass style={styles.metric}>
@@ -206,6 +210,12 @@ const FAILURES = {
   },
 };
 
+const ERROR_TITLES: Partial<Record<string, string>> = {
+  UNSUPPORTED_BRAND: 'Cartão não aceito',
+  NFC_UNSUPPORTED: 'Aparelho sem NFC',
+  INVALID_AMOUNT: 'Valor inválido',
+};
+
 /** Design B4–B6: erro, cancelado e expirado. */
 function FailureView({
   result,
@@ -222,9 +232,11 @@ function FailureView({
   const code =
     result.status === 'cancelled' ? 'CANCELLED_BY_USER' : result.error.code;
   const title =
-    result.status === 'error' && result.error.code === 'UNSUPPORTED_BRAND'
-      ? 'Cartão não aceito'
-      : look.title;
+    result.status !== 'error'
+      ? look.title
+      : (ERROR_TITLES[result.error.code] ?? look.title);
+  // Repetir só faz sentido se o problema pode mudar sem trocar de aparelho ou de valor.
+  const canRetry = !(code in ERROR_TITLES) || code === 'UNSUPPORTED_BRAND';
   const message =
     result.status === 'cancelled'
       ? 'A leitura foi cancelada pelo operador antes da conclusão.'
@@ -274,11 +286,13 @@ function FailureView({
         </Glass>
       </ScrollView>
       <View style={[styles.footer, styles.footerGap]}>
-        <PrimaryButton
-          label="Tentar novamente"
-          onPress={onRetry}
-          testID="result-retry"
-        />
+        {canRetry && (
+          <PrimaryButton
+            label="Tentar novamente"
+            onPress={onRetry}
+            testID="result-retry"
+          />
+        )}
         <SecondaryButton
           label="Nova cobrança"
           onPress={onNewCharge}
