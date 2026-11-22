@@ -79,7 +79,7 @@ jobs:
         working-directory: example/android
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g"
-        run: ./gradlew :react-native-cashtap:testDebugUnitTest :react-native-cashtap:verifyEmvCoverage
+        run: ./gradlew :react-native-cashtap:testDebugUnitTest :react-native-cashtap:verifyEmvCoverage -PcashtapCoverage
 
       - name: Upload Kotlin test report
         if: failure()

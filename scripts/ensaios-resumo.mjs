@@ -206,7 +206,9 @@ function main(files) {
   const discarded = new Map();
   let duplicates = 0;
   for (const file of files) {
-    const { header, rows } = parseCsv(readFileSync(file, 'utf8'));
+    // Planilhas costumam salvar CSV com BOM, que estragaria o nome da 1ª coluna.
+    const text = readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+    const { header, rows } = parseCsv(text);
     if (header.includes('motivo') && header.includes('captura')) {
       for (const r of rows) discarded.set(r.captura, r.motivo);
       continue;

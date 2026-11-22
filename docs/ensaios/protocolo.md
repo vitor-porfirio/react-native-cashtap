@@ -47,7 +47,7 @@ São 20 tentativas **válidas** por sessão (tentativas descartadas são refeita
    1. Tocar **Nova tentativa**.
    2. Aproximar o cartão sobre a marca e mantê-lo até o modal fechar.
    3. Afastar o cartão e aguardar 3 s antes da próxima tentativa.
-3. Tocar **Exportar sessão N** e salvar como `docs/ensaios/dados/sessao-<n>-<AAAA-MM-DD>.csv`. Exportar ao fim de cada bloco protege contra perda se o app fechar; a exportação seguinte da mesma sessão substitui o arquivo.
+3. Tocar **Exportar sessão N** e salvar como `docs/ensaios/dados/sessao-<n>-<AAAA-MM-DD>-<bandeira>.csv` (ex.: `sessao-1-2026-12-01-visa.csv`). Um arquivo por bloco, nunca por cima do anterior: se o app fechar entre os blocos, a exportação seguinte traz só o que ficou em memória, e o arquivo do bloco anterior continua salvo. Arquivos que se sobrepõem não causam contagem dupla, porque o script ignora capturas repetidas.
 4. Repetir os passos 2 e 3 com a outra bandeira.
 5. Registrar os descartes (se houver) e preencher a linha da sessão em [dados/README.md](dados/README.md).
 

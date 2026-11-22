@@ -28,9 +28,9 @@ Código que só existe para falar com hardware (`IsoDepTransceiver`, `NfcSession
 
 ```bash
 yarn test --coverage
-cd example/android && ./gradlew :react-native-cashtap:testDebugUnitTest :react-native-cashtap:verifyEmvCoverage
+cd example/android && ./gradlew :react-native-cashtap:testDebugUnitTest :react-native-cashtap:verifyEmvCoverage -PcashtapCoverage
 ```
 
-`verifyEmvCoverage` falha se `com.cashtap.emv` tiver menos de 90% de linhas cobertas (relatório em `android/build/reports/coverage/test/debug/`).
+`verifyEmvCoverage` só existe com `-PcashtapCoverage` (a cobertura fica desligada no build de quem instala o pacote) e falha se `com.cashtap.emv` tiver menos de 90% de linhas cobertas (relatório em `android/build/reports/coverage/test/debug/`).
 
 Relatório Kotlin: `android/build/reports/tests/testDebugUnitTest/index.html`.

@@ -127,7 +127,7 @@ Aplicada no `CashTapProvider` (todas as capturas) ou em `capture({ appearance })
 
 ```ts
 // Painel
-function CashTapDiagnostics(props: CashTapDiagnosticsProps): JSX.Element;
+function CashTapDiagnostics(props: CashTapDiagnosticsProps): React.JSX.Element;
 type CashTapDiagnosticsProps = {
   onEmptyAction?: () => void;   // ação do estado vazio (ex.: ir para a cobrança)
   emptyActionLabel?: string;

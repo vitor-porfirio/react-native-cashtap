@@ -931,6 +931,41 @@ describe('robustez do runner (D018)', () => {
     expect(result.meta.readDurationMs).toBe(250);
   });
 
+  it('E8-H2/#31: nova tag durante uma leitura que dá certo não muda o instante da detecção', async () => {
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    clock += 40;
+    native.tap();
+    await flush();
+    clock += 100;
+    native.tap(); // tag pendente que não chega a ser usada
+    await flush();
+    clock += 100;
+    native.finishRead({ ok: true, card });
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.success);
+    const result = await promise;
+    expect(result.meta.detectionMs).toBe(40);
+    expect(result.meta.readDurationMs).toBe(200);
+  });
+
+  it('E8-H2/#31: leitura que termina em INCOMPLETE_DATA não expõe métricas de sucesso', async () => {
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    native.tap();
+    await flush();
+    native.finishRead({ ok: true, card: { ...card, expiry: '' } });
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.failure);
+    const result = await promise;
+    expect(result).toMatchObject({
+      status: 'error',
+      error: { code: 'INCOMPLETE_DATA' },
+    });
+    expect(result.meta.detectionMs).toBeUndefined();
+    expect(result.meta.readDurationMs).toBeUndefined();
+  });
+
   it('E8-H2/#31: cartão aproximado durante a verificação conta da detecção, não do NFC pronto', async () => {
     const gate: { open?: () => void } = {};
     native.startReaderMode.mockImplementationOnce(

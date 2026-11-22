@@ -33,7 +33,7 @@ export type DiagnosticsReport = {
   stepTimings: StepTiming[];
   /** Duração total da captura (t_total). */
   durationMs?: number;
-  /** Da detecção do cartão ao resultado da leitura (t_ciclo). */
+  /** Do início da leitura bem-sucedida ao resultado (t_ciclo). */
   readDurationMs?: number;
   cryptogramPresent?: boolean;
 };

@@ -392,7 +392,7 @@ stateDiagram-v2
 
 **Decisão:**
 - `CaptureMeta.detectionMs` (opcional, só em sucesso): do `capture()` ao instante em que o runner recebeu o `onTagDetected` da aproximação cuja leitura deu certo. Com tag pendente (D017) é a tag relida, não a primeira; com o cartão aproximado durante a verificação, é o instante da aproximação, não o do NFC pronto. Mesmo relógio monotônico de `durationMs` e `readDurationMs` (D018). Exportado como `t_deteccao`.
-- CI: job `test-android` roda `testDebugUnitTest` e `verifyEmvCoverage` (JDK 17, JVM, sem device), com cache Gradle de prefixo próprio, para não ocupar a chave do `build-android`, e relatório publicado quando falha. `verifyEmvCoverage` lê o relatório JaCoCo do AGP (`enableUnitTestCoverage`, sem dependência nova) e falha se `com.cashtap.emv` tiver menos de 90% de linhas cobertas (hoje: 98,5%).
+- CI: job `test-android` roda `testDebugUnitTest` e `verifyEmvCoverage` (JDK 17, JVM, sem device), com cache Gradle de prefixo próprio, para não ocupar a chave do `build-android`, e relatório publicado quando falha. `verifyEmvCoverage` só é registrada com `-PcashtapCoverage` (a cobertura fica desligada no build de quem instala o pacote), lê o relatório JaCoCo do AGP (`enableUnitTestCoverage`, sem dependência nova) e falha se `com.cashtap.emv` tiver menos de 90% de linhas cobertas (hoje: 98,5%).
 - Protocolo dos ensaios em `docs/ensaios/protocolo.md`, escrito antes da coleta:
   - 3 sessões × (10 Visa + 10 Mastercard) **válidas**, com a ordem das bandeiras alternada entre sessões.
   - Posição da antena marcada fisicamente.

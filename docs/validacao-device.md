@@ -111,7 +111,7 @@ Siga o [protocolo dos ensaios](ensaios/protocolo.md): 60 leituras, 30 Visa e 30 
 |---|---|---|---|
 | 8.1 | Instalar o app em release a partir da `main` e anotar o commit | `yarn example android --mode release --active-arch-only` conclui; app abre na cobrança | |
 | 8.1b | Antes da 1ª sessão: achar o ponto da antena e marcar com fita | Detecção imediata sobre a marca | |
-| 8.2 | Sessão 1 (Visa → Mastercard), exportando ao fim de cada bloco com **Exportar sessão 1** | `docs/ensaios/dados/sessao-1-<data>.csv` com 20 tentativas válidas (mais as descartadas, anotadas em `descartes.csv`) e colunas `t_deteccao`…`t_read`; nenhuma linha de outra sessão | |
+| 8.2 | Sessão 1 (Visa → Mastercard), exportando ao fim de cada bloco com **Exportar sessão 1** | `docs/ensaios/dados/sessao-1-<data>-visa.csv` e `-mastercard.csv`, juntos com 20 tentativas válidas (mais as descartadas, anotadas em `descartes.csv`) e colunas `t_deteccao`…`t_read`; nenhuma linha de outra sessão | |
 | 8.3 | Sessões 2 (Mastercard → Visa) e 3 (Visa → Mastercard) em dias diferentes | Mais dois CSVs com 20 tentativas válidas cada | |
 | 8.4 | `node scripts/ensaios-resumo.mjs docs/ensaios/dados/*.csv` | Tabelas por bandeira e total, prontas para o capítulo de resultados | |
 | 8.5 | Conferir os CSVs | Nenhum número de cartão em nenhuma coluna | |

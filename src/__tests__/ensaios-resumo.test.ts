@@ -1,6 +1,6 @@
-import { describe, expect, it } from '@jest/globals';
+import { afterAll, describe, expect, it } from '@jest/globals';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { measurementsToCsv, toMeasurementRow } from '../core/measurements';
@@ -58,8 +58,14 @@ function csv(
   );
 }
 
+const created: string[] = [];
+afterAll(() => {
+  for (const dir of created) rmSync(dir, { recursive: true, force: true });
+});
+
 function run(files: Record<string, string>) {
   const dir = mkdtempSync(join(tmpdir(), 'ensaios-'));
+  created.push(dir);
   const paths = Object.entries(files).map(([name, content]) => {
     const path = join(dir, name);
     writeFileSync(path, content);
@@ -152,6 +158,15 @@ describe('scripts/ensaios-resumo.mjs (#32)', () => {
     });
     expect(status).toBe(2);
     expect(stderr).toContain('faltam colunas');
+  });
+
+  it('descartes salvos por planilha (com BOM) são lidos', () => {
+    const { status, stdout } = run({
+      'sessao-1.csv': session1,
+      'descartes.csv': '\uFEFFcaptura,motivo\nct_5,cartão errado\n',
+    });
+    expect(status).toBe(0);
+    expect(stdout).toContain('descartadas: 1');
   });
 
   it('nenhuma saída carrega PAN (RN-23)', () => {
