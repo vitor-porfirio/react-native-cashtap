@@ -577,9 +577,16 @@ describe('aparência não altera o fluxo (#26)', () => {
       ...(variant === 'capture' && { appearance: LOOK }),
     });
     look();
+    // A tela final fica o tempo todo: a promise só resolve no fim da exibição.
+    let early = false;
+    const hold = async (ms: number) => {
+      await advance(ms - 1);
+      early = early || result() !== undefined;
+      await advance(1);
+    };
     if (script === 'timeout') {
       await advance(10_000);
-      await advance(DEFAULT_DISPLAY_DURATIONS.failure);
+      await hold(DEFAULT_DISPLAY_DURATIONS.failure);
     } else if (script === 'cancel') {
       await fireEvent.press(screen.getByTestId('cashtap-cancel'));
       await settle();
@@ -599,7 +606,7 @@ describe('aparência não altera o fluxo (#26)', () => {
       }
       await act(async () => native.finishRead({ ok: true, card }));
       await settle();
-      await advance(DEFAULT_DISPLAY_DURATIONS.success);
+      await hold(DEFAULT_DISPLAY_DURATIONS.success);
     }
     const final = result();
     unsubscribe();
@@ -613,6 +620,7 @@ describe('aparência não altera o fluxo (#26)', () => {
       status: final?.status,
       attempts: final?.meta.attempts,
       durationMs: final?.meta.durationMs,
+      early,
     };
   }
 
@@ -621,6 +629,7 @@ describe('aparência não altera o fluxo (#26)', () => {
     async (script) => {
       const base = await trace('none', script);
       expect(base.status).toBeDefined();
+      expect(base.early).toBe(false);
       expect(await trace('provider', script)).toEqual(base);
       expect(await trace('capture', script)).toEqual(base);
     }
@@ -707,6 +716,8 @@ describe('textos customizados (E6-H3)', () => {
     await start({ amountCents: 100, timeoutMs: 10_000 });
     await advance(10_000);
     collect();
+    // `close` é usado em mais de uma tela: cada uma precisa do texto customizado.
+    expect(screen.getByTestId('cashtap-close')).toHaveTextContent('«close»');
     await view.unmount();
 
     // erros: genérico e bandeira
@@ -721,6 +732,7 @@ describe('textos customizados (E6-H3)', () => {
       await act(async () => native.finishRead({ ok: false, code, detail: '' }));
       await settle();
       collect();
+      expect(screen.getByTestId('cashtap-close')).toHaveTextContent('«close»');
       await view.unmount();
     }
 
