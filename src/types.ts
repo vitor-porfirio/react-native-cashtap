@@ -69,6 +69,8 @@ export type CaptureMeta = {
   durationMs: number;
   /** Leituras iniciadas, contando as retentativas automáticas. */
   attempts: number;
+  /** Do `capture()` à detecção do cartão que foi lido com sucesso (inclui a espera do operador e as retentativas). */
+  detectionMs?: number;
   /** Da detecção do cartão ao resultado da leitura bem-sucedida. */
   readDurationMs?: number;
   /** Tempo de cada etapa do diálogo na leitura bem-sucedida. */

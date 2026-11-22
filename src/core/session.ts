@@ -108,6 +108,7 @@ export class CaptureSession {
   private startedAtEpoch = 0;
   private readStartedAt: number | null = null;
   private readDurationMs: number | undefined;
+  private detectionMs: number | undefined;
   private outcomeAt: number | null = null;
   private readonly stepsDone = new Set<string>();
   private nfcChecked = false;
@@ -364,6 +365,7 @@ export class CaptureSession {
     if (outcome.ok) {
       if (this.readStartedAt !== null) {
         this.readDurationMs = this.deps.clock.now() - this.readStartedAt;
+        this.detectionMs = this.readStartedAt - this.startedAtMono;
       }
       this.dispatch({ type: 'READ_SUCCEEDED', card: outcome.card });
     } else {
@@ -414,6 +416,7 @@ export class CaptureSession {
           }))
         : [],
       ...(card && {
+        detectionMs: this.detectionMs,
         readDurationMs: this.readDurationMs,
         cryptogramPresent: card.cryptogramPresent,
       }),

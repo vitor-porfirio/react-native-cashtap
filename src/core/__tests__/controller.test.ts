@@ -198,6 +198,7 @@ describe('capture() — caminho feliz (E5-H1)', () => {
         reference: 'pedido-42',
         startedAt: 1_795_000_000_000,
         attempts: 1,
+        detectionMs: 100,
         readDurationMs: 250,
         cryptogramPresent: true,
         stepTimings: [
@@ -878,6 +879,7 @@ describe('robustez do runner (D018)', () => {
     await advance(DEFAULT_DISPLAY_DURATIONS.failure);
     const result = await promise;
     expect(result.meta.durationMs).toBe(10_000);
+    expect(result.meta.detectionMs).toBeUndefined();
   });
 
   it('t_ciclo é medido a partir da leitura que teve sucesso, mesmo com tag pendente', async () => {
@@ -897,6 +899,8 @@ describe('robustez do runner (D018)', () => {
     await advance(DEFAULT_DISPLAY_DURATIONS.success);
     const result = await promise;
     expect(result.meta.readDurationMs).toBe(200);
+    // t_deteccao: até a entrada em READING da leitura que deu certo (releitura da tag pendente)
+    expect(result.meta.detectionMs).toBe(500);
   });
 });
 

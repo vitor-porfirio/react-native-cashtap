@@ -16,6 +16,8 @@ export type MeasurementRow = {
   errorCode: ErrorCode | '';
   brand: CardBrand | '';
   attempts: number;
+  /** Do `capture()` à detecção do cartão lido com sucesso (t_deteccao). */
+  detectionMs: number | null;
   /** Da detecção do cartão ao resultado da leitura (t_ciclo). */
   readMs: number | null;
   /** Do `capture()` ao desfecho (t_total). */
@@ -38,6 +40,7 @@ export const MEASUREMENT_COLUMNS: ReadonlyArray<
   ['errorCode', 'categoria'],
   ['brand', 'bandeira'],
   ['attempts', 'tentativas'],
+  ['detectionMs', 't_deteccao'],
   ['readMs', 't_ciclo'],
   ['totalMs', 't_total'],
   ['ppseMs', 't_ppse'],
@@ -79,6 +82,7 @@ export function toMeasurementRow(result: CaptureResult): MeasurementRow {
     errorCode: 'error' in result ? result.error.code : '',
     brand: result.status === 'success' ? result.card.brand : '',
     attempts: result.meta.attempts,
+    detectionMs: round(result.meta.detectionMs),
     readMs: round(result.meta.readDurationMs),
     totalMs: Math.round(result.meta.durationMs * 10) / 10,
     ppseMs: step('SELECT_PPSE'),
