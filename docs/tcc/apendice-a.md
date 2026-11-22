@@ -75,8 +75,8 @@ type CaptureMeta = {
   startedAt: number;
   durationMs: number;
   attempts: number;
-  detectionMs?: number;          // do capture() à detecção do cartão lido (t_deteccao)
-  readDurationMs?: number;       // da detecção ao resultado (t_ciclo)
+  detectionMs?: number;          // só em sucesso: do capture() à aproximação que deu certo (t_deteccao)
+  readDurationMs?: number;       // só em sucesso: do início dessa leitura ao resultado (t_ciclo)
   stepTimings: { step: EmvStep; durationMs: number }[];
   cryptogramPresent?: boolean;   // o valor nunca é exposto (RN-27)
 };
@@ -126,14 +126,65 @@ Aplicada no `CashTapProvider` (todas as capturas) ou em `capture({ appearance })
 ## A.7 Instrumentação (ensaios) — `react-native-cashtap/dev`
 
 ```ts
+// Painel
+function CashTapDiagnostics(props: CashTapDiagnosticsProps): JSX.Element;
+type CashTapDiagnosticsProps = {
+  onEmptyAction?: () => void;   // ação do estado vazio (ex.: ir para a cobrança)
+  emptyActionLabel?: string;
+};
+
+// Registro da última captura com diagnostics: true (em memória)
 function getLastDiagnostics(): DiagnosticsReport | null;
 function onDiagnosticsChange(listener: (report: DiagnosticsReport | null) => void): Unsubscribe;
 function diagnosticsToText(report: DiagnosticsReport): string;
+
+type DiagnosticsReport = {
+  captureId: string;
+  startedAt: number;
+  transitions: Array<{ state: CaptureState; atMs: number }>;
+  exchanges: DiagnosticsExchange[];
+  outcome?: CaptureResult['status'];
+  errorCode?: ErrorCode;
+  stepTimings: StepTiming[];
+  durationMs?: number;          // t_total
+  readDurationMs?: number;      // t_ciclo
+  cryptogramPresent?: boolean;
+};
+type DiagnosticsExchange = {
+  step: EmvStep;
+  command: string;              // hexadecimal; só dados do terminal
+  response: string;             // mascarada na origem (allowlist, D016)
+  sw: string;
+  durationMs: number;
+  atMs: number;
+};
+
+// Medições dos ensaios
 function toMeasurementRow(result: CaptureResult): MeasurementRow;
-function measurementsToCsv(rows: MeasurementRow[]): string;
+function measurementsToCsv(
+  rows: ReadonlyArray<MeasurementRow & Record<string, unknown>>,
+  extraColumns?: readonly string[]   // colunas do app, à esquerda (ex.: 'sessao')
+): string;
+const MEASUREMENT_COLUMNS: ReadonlyArray<readonly [keyof MeasurementRow, string]>;
+
+type MeasurementOutcome = 'success' | 'recovered' | 'failure' | 'cancelled' | 'timeout';
+type MeasurementRow = {
+  captureId: string;
+  outcome: MeasurementOutcome;
+  errorCode: ErrorCode | '';
+  brand: CardBrand | '';
+  attempts: number;
+  detectionMs: number | null;   // t_deteccao
+  readMs: number | null;        // t_ciclo
+  totalMs: number;              // t_total
+  ppseMs: number | null;        // t_ppse
+  aidMs: number | null;         // t_aid
+  gpoMs: number | null;         // t_gpo
+  readRecordMs: number | null;  // t_read
+};
 ```
 
-`<CashTapDiagnostics />` exibe a última captura feita com `diagnostics: true`. `MeasurementRow` usa identificadores em inglês (`outcome: 'success' | 'recovered' | 'failure' | 'cancelled' | 'timeout'`, `detectionMs` = t_deteccao, `readMs` = t_ciclo, `totalMs` = t_total, `ppseMs`, `aidMs`, `gpoMs`, `readRecordMs`); o CSV sai com os rótulos do formulário de ensaios do Apêndice B (`desfecho`, `t_ciclo`, `t_total`, ...). Essas funções ficam numa entrada separada para não entrarem no bundle de produção (D020).
+`<CashTapDiagnostics />` exibe a última captura feita com `diagnostics: true`. `MEASUREMENT_COLUMNS` liga cada campo ao rótulo do formulário de ensaios do Apêndice B, que é o cabeçalho do CSV (`captura`, `desfecho`, `categoria`, `bandeira`, `tentativas`, `t_deteccao`, `t_ciclo`, `t_total`, `t_ppse`, `t_aid`, `t_gpo`, `t_read`); no CSV, o desfecho sai como `sucesso`, `recuperado`, `falha`, `cancelado` ou `expirado`. Essas funções ficam numa entrada separada para não entrarem no bundle de produção (D020).
 
 ## A.8 Equivalência com a proposta original
 

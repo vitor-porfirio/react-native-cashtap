@@ -54,7 +54,7 @@ O fluxo (aguardar → ler → retentar → concluir) é política de produto. Ma
 | evento `onNfcStatusChange` | status | Broadcast do sistema |
 | evento `onDiagnostic` | `{ step, command, response, sw, durationMs }` | A cada comando (alimenta a barra de progresso). Com `diagnostics` falso, `command`/`response` vêm vazios; com verdadeiro, já mascarados na origem |
 
-O resultado da leitura atravessa como JSON e são validadas campo a campo em `src/native.ts` (sem `as`); formato inesperado vira `PARSE_ERROR`. Detalhes em [D017](../DECISIONS.md).
+O resultado da leitura atravessa como JSON e é validado campo a campo em `src/native.ts` (sem `as`); formato inesperado vira `PARSE_ERROR`. Detalhes em [D017](../DECISIONS.md).
 
 ## Diálogo EMV (Kotlin)
 
@@ -65,7 +65,8 @@ SELECT PPSE ──9000──► candidatas (61: 4F/50/87), ordenadas pela tag 87
 SELECT AID ──► FCI: rótulo (50), PDOL (9F38)
 GET PROCESSING OPTIONS ──► 80 (AIP+AFL) ou 77 (template)
 READ RECORD × AFL ──► 5A, 57, 5F24, 5F34, 9F6B...
-CardDataExtractor ──► PAN, validade, bandeira pelo AID; zera buffers (RN-26)
+CardDataExtractor ──► PAN, validade, bandeira pelo AID
+EmvOrchestrator (finally) ──► zera buffers e TLVs lidos (RN-26)
 ```
 
 Comandos e tratamento de cada status word: [Apêndice C](tcc/apendice-c.md).
@@ -83,6 +84,8 @@ Comandos e tratamento de cada status word: [Apêndice C](tcc/apendice-c.md).
 
 O executor é encerrado em `invalidate()`. Toda `Promise` é resolvida exatamente uma vez, inclusive em exceção inesperada.
 
+**Ciclo de vida (E2-H2):** `NfcSessionManager` é `LifecycleEventListener`. Em `onHostPause` desliga o reader mode; em `onHostResume` religa se a sessão ainda estiver ativa. A Activity é obtida no momento do uso (`currentActivity`), nunca guardada.
+
 ## Segurança na arquitetura
 
 - **Mascaramento na origem:** o diagnóstico é mascarado em `emv/Masking.kt`, antes de virar evento; o TS nunca recebe o comando em claro.
@@ -99,3 +102,5 @@ O executor é encerrado em `invalidate()`. Toda `Promise` é resolvida exatament
 | Máquina, runner, controller, params, erros, fronteira | Jest com fake timers e módulo nativo simulado | `src/**/__tests__/` |
 | Modal, Provider, diagnóstico | Jest + Testing Library | `src/ui/__tests__/` |
 | Rádio, Activity, cartão real | Roteiro manual | [validacao-device.md](validacao-device.md) |
+
+No CI (`.github/workflows/ci.yml`), todo push e PR para a `main` roda lint, typecheck, Jest com cobertura, os testes JVM com cobertura do núcleo `emv/` (mínimo de 90% de linhas), o build da biblioteca e o build do app de exemplo.

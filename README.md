@@ -15,7 +15,7 @@ if (result.status === 'success') enviarAoBackend(result.card);
 
 - **Inversão de controle:** o app não desenha nenhuma tela do fluxo — modal, instruções, timeout, novas tentativas e mensagens de erro são do SDK.
 - **Protocolo próprio:** diálogo EMV (PPSE → AID → GPO → READ RECORD) e parser BER-TLV implementados no pacote, sem biblioteca de terceiros.
-- **Nova Arquitetura:** Turbo Module com Codegen (React Native ≥ 0.76).
+- **Nova Arquitetura:** Turbo Module com Codegen.
 - **Sem rede e sem persistência:** o SDK não faz nenhuma chamada de rede e não grava dado de cartão.
 
 > **Leia as [limitações](#limitações)** antes de usar: o SDK lê dados públicos do cartão; ele **não autoriza pagamentos** e **não é certificado** (PCI MPoC / EMV L2-L3).
@@ -26,8 +26,8 @@ if (result.status === 'success') enviarAoBackend(result.card);
 
 | | |
 |---|---|
-| Plataforma | **Android** com NFC. iOS não é suportado (veja limitações). |
-| React Native | Nova Arquitetura habilitada (`newArchEnabled=true`); testado com 0.88 |
+| Plataforma | **Android** com NFC. Em iOS o pacote instala, mas `capture()` resolve com `NFC_UNSUPPORTED` sem abrir nada (veja limitações). |
+| React Native | ≥ 0.88 (versão testada), Nova Arquitetura habilitada (`newArchEnabled=true`) |
 | Android | `minSdk` 24 (Android 7.0) |
 | Cartões | Visa e Mastercard contactless |
 
@@ -38,7 +38,7 @@ yarn add react-native-cashtap
 # ou: npm install react-native-cashtap
 ```
 
-Recompile o app Android (`yarn android` ou pelo Android Studio). O autolinking registra o módulo; recarregar só o JavaScript não basta.
+Recompile o app Android (`yarn android` ou pelo Android Studio). O autolinking registra o módulo; recarregar só o JavaScript não basta. Em Expo, use um *development build* (o Expo Go não carrega módulos nativos de terceiros).
 
 ### Permissões
 
@@ -89,7 +89,7 @@ async function cobrar(amountCents: number) {
 }
 ```
 
-`capture()` **sempre resolve** com um desfecho — nunca rejeita por erro de operação (cartão não aceito, NFC desligado, tempo esgotado...). Ela só rejeita por erro de **integração**: `CashTapProvider` não montado ou módulo nativo não instalado.
+`capture()` **sempre resolve** com um desfecho — nunca rejeita por erro de operação (cartão não aceito, NFC desligado, tempo esgotado...). Ela só rejeita por erro de **integração**: `CashTapProvider` não montado ou módulo nativo não instalado. `getNfcStatus()` e `onNfcStatusChange()` seguem a mesma regra: no Android sem o módulo nativo, lançam o erro de instalação.
 
 ### 3. (Opcional) Mostre o status do NFC no seu app
 
@@ -109,13 +109,13 @@ O próprio modal já trata NFC desligado: orienta o operador, abre as configura�
 
 | Parâmetro | Tipo | Padrão | Descrição |
 |---|---|---|---|
-| `amountCents` | `number` | — | **Obrigatório.** Valor em centavos, inteiro, > 0. |
+| `amountCents` | `number` | — | **Obrigatório.** Valor em centavos, inteiro, de 1 a 999 999 999 999 (limite do campo EMV de valor). |
 | `currencyCode` | `string` | `'986'` | ISO 4217 numérico (BRL = `'986'`). |
 | `reference` | `string` | — | Identificador da cobrança no seu app; volta em `meta.reference`. |
 | `timeoutMs` | `number` | `30000` | Espera pela aproximação. Faixa 10 000–120 000 (fora dela, vale o limite mais próximo). |
-| `maxRetries` | `number` | `2` | Novas tentativas automáticas quando o cartão é afastado cedo. Faixa 0–5. |
+| `maxRetries` | `number` | `2` | Novas tentativas automáticas em falha recuperável: cartão afastado cedo, falha de comunicação ou resposta ilegível. Faixa 0–5. |
 | `appearance` | `CashTapAppearance` | — | Aparência só desta captura (sobrepõe a do Provider). |
-| `diagnostics` | `boolean` | `false` | Grava a última captura para o `<CashTapDiagnostics>`. Desenvolvimento. |
+| `diagnostics` | `boolean` | `false` | Registra **em memória** a última captura para o `<CashTapDiagnostics>`. Desenvolvimento. |
 
 ```ts
 type CaptureResult =
@@ -140,9 +140,10 @@ type CaptureMeta = {
   startedAt: number;        // epoch ms
   durationMs: number;       // até o desfecho
   attempts: number;         // leituras, contando as retentativas
-  detectionMs?: number;     // do capture() à detecção do cartão lido
-  readDurationMs?: number;  // da detecção ao resultado da leitura
-  stepTimings: Array<{ step: EmvStep; durationMs: number }>;
+  // Só em sucesso:
+  detectionMs?: number;     // do capture() à aproximação que deu certo
+  readDurationMs?: number;  // do início dessa leitura ao resultado
+  stepTimings: Array<{ step: EmvStep; durationMs: number }>; // vazio fora do sucesso
   cryptogramPresent?: boolean; // o valor do criptograma nunca é exposto
 };
 ```
@@ -163,7 +164,7 @@ type CaptureMeta = {
 
 | Código | Quando |
 |---|---|
-| `NFC_UNSUPPORTED` | Aparelho sem NFC. O modal não abre. |
+| `NFC_UNSUPPORTED` | Aparelho sem NFC, ou plataforma que não é Android. O modal não abre. |
 | `NFC_DISABLED` | NFC desligado e o operador fechou a tela que pede para ligá-lo. |
 | `INVALID_AMOUNT` | `amountCents` ou `currencyCode` inválido. O rádio não é acionado. |
 | `ALREADY_RUNNING` | Já existe uma captura em andamento. |
@@ -173,7 +174,7 @@ type CaptureMeta = {
 | `TIMEOUT` | Ninguém aproximou o cartão no tempo (status `timeout`). |
 | `UNKNOWN` | Falha inesperada. Veja `detail`. |
 
-`CARD_REMOVED`, `PROTOCOL_ERROR` e `PARSE_ERROR` são tratados internamente com novas tentativas e só aparecem em `onStateChange`.
+`CARD_REMOVED`, `PROTOCOL_ERROR` e `PARSE_ERROR` são tratados internamente com novas tentativas e só aparecem em `onStateChange`. `CANCELLED_BY_USER` também não chega a `result.error`: cancelamento resolve com `status: 'cancelled'`.
 
 > `ErrorCode` e `CardBrand` podem ganhar valores em versões minor. Em `switch`, mantenha um `default`.
 
@@ -210,15 +211,15 @@ await capture({ amountCents: 100, diagnostics: true });
 <CashTapDiagnostics />; // transições, tempo por etapa e comandos (dados sensíveis mascarados)
 
 const row = toMeasurementRow(result); // { outcome, readMs, totalMs, ppseMs, ... }
-const csv = measurementsToCsv(rows);    // cabeçalho com os rótulos do Apêndice B do TCC
+const csv = measurementsToCsv(rows, ['sessao']); // colunas extras à esquerda; cabeçalho do Apêndice B
 ```
 
-Requer bundler com suporte ao campo `exports` (Metro, padrão desde o React Native 0.79).
+Requer bundler com suporte ao campo `exports` (Metro faz isso por padrão) e, para os tipos, `moduleResolution` `bundler` ou `node16` no `tsconfig` do app (padrão do template atual do React Native).
 
 ## Segurança e privacidade
 
 - **Sem rede:** nenhuma chamada de rede no pacote. Transmitir os dados é responsabilidade do seu app.
-- **Sem persistência:** nada do cartão é gravado; buffers de bytes são sobrescritos após a leitura.
+- **Sem persistência:** nada do cartão é gravado. Os buffers de bytes da leitura são zerados ao fim; o número e a validade, porém, viram `String` (Kotlin) e `string` (JavaScript), que são imutáveis e só somem quando o coletor de lixo os recolhe. Não guarde `result.card` além do necessário para enviá-lo ao backend.
 - **Logs:** nenhum log do SDK contém número completo, Track 1/2 ou criptograma. O diagnóstico usa lista de permissões de tags: tudo o que não é estrutura pública aparece mascarado.
 - **PAN completo uma vez:** só em `result.card.pan`. Use `panMasked` para exibir e registrar.
 - **Criptograma:** nunca exposto (apenas `meta.cryptogramPresent`).
@@ -231,7 +232,8 @@ Leia antes de usar em qualquer contexto real.
 - **Não autoriza pagamentos.** O SDK lê dados públicos do cartão. A autorização depende do criptograma, que só o emissor valida, e de uma credenciadora. O resultado do SDK é a entrada para esse processo, não a confirmação de um pagamento.
 - **Não é certificado.** Não há certificação PCI MPoC nem EMV L2/L3, e não há controles antifraude de produção (atestação do dispositivo, detecção de root, ofuscação). Não use para aceitar pagamentos reais sem esses controles.
 - **Bandeiras:** Visa e Mastercard. Outras (Elo, Amex, Hipercard) resultam em `UNSUPPORTED_BRAND`.
-- **Responsabilidade sobre o dado:** o número do cartão é dado pessoal (LGPD). Base legal, finalidade, transmissão segura e retenção dos dados recebidos são responsabilidade do app integrador.
+- **Responsabilidade sobre o dado:** o número do cartão é dado pessoal (LGPD). Base legal, finalidade, transmissão segura e retenção dos dados recebidos são responsabilidade do app integrador. Receber, transmitir ou armazenar o número completo coloca o app e o backend no escopo do PCI DSS.
+- **Carteiras digitais:** celular ou relógio com Google Pay/Apple Pay entregam um *token* (DPAN), não o número do cartão físico.
 - **Validação em campo:** testado com fixtures sintéticos e roteiro em aparelho físico ([docs/validacao-device.md](docs/validacao-device.md)); o comportamento de cartões em circulação pode divergir da especificação.
 
 ## Desenvolvimento
