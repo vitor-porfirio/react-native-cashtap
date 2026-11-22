@@ -1,68 +1,10 @@
+import type { CashTapAppearance, CashTapColors, CashTapTexts } from '../types';
+
 /**
- * Tema do modal (E6-H3), a partir dos tokens do design (`docs/design/cashtap-tokens.json`).
+ * Tema do modal (E6-H3), a partir dos tokens do design (tabela em D019).
  * O integrador muda como o fluxo parece, nunca o que acontece: nenhum token altera transições.
  */
-export type CashTapColors = {
-  primary: string;
-  primaryStrong: string;
-  primarySoft: string;
-  onPrimary: string;
-  /** Fundo da folha do modal. */
-  background: string;
-  /** Véu sobre o app hospedeiro. */
-  scrim: string;
-  /** Superfície translúcida (botões secundários, chips, cartões). */
-  surface: string;
-  surfaceStrong: string;
-  border: string;
-  /** Traço de ilustrações (silhueta do celular). */
-  line: string;
-  text: string;
-  textMuted: string;
-  success: string;
-  successSoft: string;
-  onSuccess: string;
-  error: string;
-  errorSoft: string;
-  warning: string;
-  warningSoft: string;
-  onWarning: string;
-  /** Cartão ilustrado. */
-  card: string;
-};
-
-export type CashTapTexts = {
-  brandName: string;
-  secureBadge: string;
-  amountLabel: string;
-  checkingTitle: string;
-  checkingHint: string;
-  waitingTitle: string;
-  waitingHint: string;
-  waitingRetryHint: string;
-  readingTitle: string;
-  readingHint: string;
-  cancelling: string;
-  recoverableTitle: string;
-  processingTitle: string;
-  processingHint: string;
-  successTitle: string;
-  successHint: string;
-  timeoutTitle: string;
-  /** `{seconds}` é substituído. */
-  timeoutHint: string;
-  errorTitle: string;
-  unsupportedBrandTitle: string;
-  nfcDisabledTitle: string;
-  nfcDisabledHint: string;
-  cancel: string;
-  close: string;
-  openSettings: string;
-  recheck: string;
-  /** `{current}` e `{total}` são substituídos. */
-  attempt: string;
-  expiryLabel: string;
-};
+export type { CashTapAppearance, CashTapColors, CashTapTexts };
 
 export type CashTapTheme = {
   colors: CashTapColors;
@@ -74,17 +16,7 @@ export type CashTapTheme = {
   borderRadius: number;
 };
 
-/** Aparência informada pelo integrador: tudo opcional, mesclado sobre o padrão. */
-export type CashTapAppearance = {
-  /** Base: `'dark'` (padrão) ou `'light'`. */
-  mode?: 'dark' | 'light';
-  colors?: Partial<CashTapColors>;
-  fontFamily?: string;
-  borderRadius?: number;
-  texts?: Partial<CashTapTexts>;
-};
-
-export const DARK_COLORS: CashTapColors = {
+export const DARK_COLORS: Readonly<CashTapColors> = Object.freeze({
   primary: '#7C4DFF',
   primaryStrong: '#5A2EE6',
   primarySoft: '#B79CFF',
@@ -107,9 +39,9 @@ export const DARK_COLORS: CashTapColors = {
   warningSoft: 'rgba(255, 196, 107, 0.16)',
   onWarning: '#2E1C00',
   card: '#7B52F0',
-};
+});
 
-export const LIGHT_COLORS: CashTapColors = {
+export const LIGHT_COLORS: Readonly<CashTapColors> = Object.freeze({
   primary: '#6A3BF0',
   primaryStrong: '#4F22D6',
   primarySoft: '#8E6BFF',
@@ -131,9 +63,9 @@ export const LIGHT_COLORS: CashTapColors = {
   warningSoft: 'rgba(178, 111, 0, 0.12)',
   onWarning: '#FFFFFF',
   card: '#6A3BF0',
-};
+});
 
-export const DEFAULT_TEXTS: CashTapTexts = {
+export const DEFAULT_TEXTS: Readonly<CashTapTexts> = Object.freeze({
   brandName: 'CashTap',
   secureBadge: 'Leitura segura',
   amountLabel: 'Valor a cobrar',
@@ -144,6 +76,10 @@ export const DEFAULT_TEXTS: CashTapTexts = {
   waitingRetryHint: 'Aproxime o cartão novamente e mantenha-o parado',
   readingTitle: 'Lendo cartão… não afaste',
   readingHint: 'Mantenha o cartão parado por um instante',
+  stepConnect: 'Conexão',
+  stepApplication: 'Aplicação',
+  stepAuthorize: 'Autorização',
+  stepRecords: 'Dados',
   cancelling: 'Cancelando…',
   recoverableTitle: 'Não foi possível ler. Aproxime novamente.',
   processingTitle: 'Processando…',
@@ -163,7 +99,7 @@ export const DEFAULT_TEXTS: CashTapTexts = {
   recheck: 'Verificar novamente',
   attempt: 'Tentativa {current} de {total}',
   expiryLabel: 'Validade',
-};
+});
 
 export const DEFAULT_THEME: CashTapTheme = {
   colors: DARK_COLORS,
@@ -172,23 +108,37 @@ export const DEFAULT_THEME: CashTapTheme = {
   borderRadius: 16,
 };
 
-export type ResolvedAppearance = { theme: CashTapTheme; texts: CashTapTexts };
+export type ResolvedAppearance = {
+  theme: CashTapTheme;
+  texts: CashTapTexts;
+  haptics: boolean;
+};
 
-// ---- Derivação de cores (tokens.sdkTheme.derived) ----
+// ---- Derivação de cores (tokens.sdkTheme.derived do design) ----
 
-function parseHex(color: string): [number, number, number] | null {
-  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(
-    color.trim()
-  );
-  if (!match) return null;
-  return [
-    parseInt(match[1] ?? '0', 16),
-    parseInt(match[2] ?? '0', 16),
-    parseInt(match[3] ?? '0', 16),
-  ];
+type Rgb = [number, number, number];
+
+/** `#RRGGBB` ou `rgb(a)(r, g, b[, a])`; o canal alfa é ignorado. */
+function parseColor(color: string): Rgb | null {
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color.trim());
+  if (hex) {
+    return [
+      parseInt(hex[1] ?? '0', 16),
+      parseInt(hex[2] ?? '0', 16),
+      parseInt(hex[3] ?? '0', 16),
+    ];
+  }
+  const rgb =
+    /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*[\d.]+\s*)?\)$/i.exec(
+      color.trim()
+    );
+  if (rgb) {
+    return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+  }
+  return null;
 }
 
-function toHex([r, g, b]: [number, number, number]): string {
+function toHex([r, g, b]: Rgb): string {
   return `#${[r, g, b]
     .map((c) =>
       Math.round(Math.max(0, Math.min(255, c)))
@@ -200,28 +150,26 @@ function toHex([r, g, b]: [number, number, number]): string {
 }
 
 /** Mistura `color` com `target` (0 = cor original, 1 = alvo). */
-function mix(
-  color: string,
-  target: [number, number, number],
-  amount: number
-): string | null {
-  const rgb = parseHex(color);
-  if (!rgb) return null;
+function mix(color: string, target: string, amount: number): string | null {
+  const from = parseColor(color);
+  const to = parseColor(target);
+  if (!from || !to) return null;
   return toHex([
-    rgb[0] + (target[0] - rgb[0]) * amount,
-    rgb[1] + (target[1] - rgb[1]) * amount,
-    rgb[2] + (target[2] - rgb[2]) * amount,
+    from[0] + (to[0] - from[0]) * amount,
+    from[1] + (to[1] - from[1]) * amount,
+    from[2] + (to[2] - from[2]) * amount,
   ]);
 }
 
 function alpha(color: string, opacity: number): string | null {
-  const rgb = parseHex(color);
+  const rgb = parseColor(color);
   return rgb ? `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${opacity})` : null;
 }
 
 /**
- * Quando o integrador troca só a cor base (ex.: `primary`), as variações que ele não
- * informou são derivadas dela — senão o tema ficaria metade na cor nova, metade violeta.
+ * Quando o integrador troca só a cor base (ex.: `primary` ou `text`), as variações que ele
+ * não informou são derivadas dela — senão o tema ficaria metade na cor nova, metade no
+ * padrão (ex.: texto secundário claro sobre fundo branco, sem contraste).
  */
 function deriveColors(
   base: CashTapColors,
@@ -232,37 +180,65 @@ function deriveColors(
     if (overrides[key] === undefined && value) colors[key] = value;
   };
   if (overrides.primary) {
-    derive('primaryStrong', mix(overrides.primary, [0, 0, 0], 0.12));
-    derive('primarySoft', mix(overrides.primary, [255, 255, 255], 0.25));
+    derive('primaryStrong', mix(overrides.primary, '#000000', 0.12));
+    derive('primarySoft', mix(overrides.primary, '#FFFFFF', 0.25));
     derive('card', overrides.primary);
+  }
+  if (overrides.text || overrides.background) {
+    derive('textMuted', mix(colors.text, colors.background, 0.3));
+  }
+  if (overrides.text) {
+    derive('surface', alpha(overrides.text, 0.07));
+    derive('surfaceStrong', alpha(overrides.text, 0.14));
+    derive('border', alpha(overrides.text, 0.14));
+    derive('line', alpha(overrides.text, 0.24));
   }
   if (overrides.success) derive('successSoft', alpha(overrides.success, 0.25));
   if (overrides.error) derive('errorSoft', alpha(overrides.error, 0.12));
   return colors;
 }
 
-function defined<T extends object>(value: Partial<T> | undefined): Partial<T> {
-  if (!value) return {};
+/**
+ * Só strings não vazias entram: um integrador JS que passe outro tipo (ex.: objeto em
+ * `texts`) não pode derrubar a árvore no meio de uma captura.
+ */
+function strings<T extends object>(value: unknown): Partial<T> {
+  if (!value || typeof value !== 'object') return {};
   return Object.fromEntries(
-    Object.entries(value).filter(([, v]) => v !== undefined)
+    Object.entries(value).filter(
+      ([, v]) => typeof v === 'string' && v.length > 0
+    )
   ) as Partial<T>;
 }
 
-/** Mescla camadas de aparência (Provider → captura). Valores ausentes usam o padrão. */
+/** Mescla camadas de aparência (Provider → captura). Valores ausentes ou inválidos usam o padrão. */
 export function resolveAppearance(
   ...layers: Array<CashTapAppearance | undefined>
 ): ResolvedAppearance {
-  const mode = layers.reduce<'dark' | 'light'>((m, l) => l?.mode ?? m, 'dark');
-  let colors = mode === 'light' ? LIGHT_COLORS : DARK_COLORS;
-  let texts = DEFAULT_TEXTS;
+  const mode = layers.reduce<'dark' | 'light'>(
+    (m, l) => (l?.mode === 'light' || l?.mode === 'dark' ? l.mode : m),
+    'dark'
+  );
+  let colors: CashTapColors = mode === 'light' ? LIGHT_COLORS : DARK_COLORS;
+  let texts: CashTapTexts = DEFAULT_TEXTS;
   let fontFamily = DEFAULT_THEME.fontFamily;
   let borderRadius = DEFAULT_THEME.borderRadius;
+  let haptics = true;
   for (const layer of layers) {
     if (!layer) continue;
-    colors = deriveColors(colors, defined(layer.colors));
-    texts = { ...texts, ...defined(layer.texts) };
-    if (layer.fontFamily !== undefined) fontFamily = layer.fontFamily;
-    if (layer.borderRadius !== undefined) borderRadius = layer.borderRadius;
+    colors = deriveColors(colors, strings<CashTapColors>(layer.colors));
+    texts = { ...texts, ...strings<CashTapTexts>(layer.texts) };
+    if (typeof layer.fontFamily === 'string' && layer.fontFamily) {
+      fontFamily = layer.fontFamily;
+    }
+    if (
+      typeof layer.borderRadius === 'number' &&
+      Number.isFinite(layer.borderRadius) &&
+      layer.borderRadius >= 0
+    ) {
+      borderRadius = layer.borderRadius;
+    }
+    if (typeof layer.haptics === 'boolean') haptics = layer.haptics;
   }
   return {
     theme: {
@@ -272,6 +248,7 @@ export function resolveAppearance(
       borderRadius,
     },
     texts,
+    haptics,
   };
 }
 

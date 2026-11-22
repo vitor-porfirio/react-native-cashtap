@@ -43,6 +43,8 @@ export type ActiveSession = {
     Pick<Partial<ResolvedParams>, 'appearance'>;
   /** Etapas do diálogo com o cartão concluídas na leitura atual (0 a 4). */
   progress: number;
+  /** A verificação inicial do NFC terminou; antes disso a UI não precisa aparecer (RN-01). */
+  nfcChecked: boolean;
   attempts: number;
   failures: number;
   cancelRequested: boolean;
@@ -85,7 +87,9 @@ let deps: SessionDeps = defaultDeps();
 let active: CaptureSession | null = null;
 /** Última projeção publicada: estável entre mudanças (useSyncExternalStore). */
 let activeView: ActiveSession | null = null;
-let uiHosts = 0;
+/** Hosts de UI montados, em ordem de registro; só o primeiro desenha o modal. */
+let uiHosts: symbol[] = [];
+const uiHostListeners = new Set<() => void>();
 let requireUiHost = true;
 let sequence = 0;
 const stateListeners = new Set<(event: CaptureStateEvent) => void>();
@@ -120,6 +124,7 @@ function project(session: CaptureSession): ActiveSession {
       ...(appearance !== undefined && { appearance }),
     },
     progress: session.progress,
+    nfcChecked: session.hasCheckedNfc,
     attempts: snapshot.context.attempts,
     failures: snapshot.context.failures,
     cancelRequested: snapshot.context.cancelRequested,
@@ -196,7 +201,7 @@ function notify(session: CaptureSession, change: SessionChange): void {
  * (Provider ausente, módulo nativo não instalado).
  */
 export async function capture(params: CaptureParams): Promise<CaptureResult> {
-  if (requireUiHost && uiHosts === 0) {
+  if (requireUiHost && uiHosts.length === 0) {
     throw new Error(
       'react-native-cashtap: monte <CashTapProvider> na raiz do app antes de chamar capture().'
     );
@@ -266,13 +271,31 @@ export function onStateChange(
 // ---- Uso interno da UI do SDK ----
 
 /** Chamado pelo `CashTapProvider` ao montar; devolve a função de desmontagem. */
-export function registerUiHost(): Unsubscribe {
-  uiHosts += 1;
+export function registerUiHost(host: symbol): Unsubscribe {
+  if (uiHosts.length > 0 && __DEV__) {
+    console.warn(
+      'react-native-cashtap: mais de um <CashTapProvider> montado; só o primeiro exibe o modal.'
+    );
+  }
+  uiHosts = [...uiHosts, host];
+  uiHostListeners.forEach(safely);
   let registered = true;
   return () => {
     if (!registered) return;
     registered = false;
-    uiHosts = Math.max(0, uiHosts - 1);
+    uiHosts = uiHosts.filter((h) => h !== host);
+    uiHostListeners.forEach(safely);
+  };
+}
+
+export function getPrimaryUiHost(): symbol | null {
+  return uiHosts[0] ?? null;
+}
+
+export function subscribeUiHosts(listener: () => void): Unsubscribe {
+  uiHostListeners.add(listener);
+  return () => {
+    uiHostListeners.delete(listener);
   };
 }
 
@@ -310,7 +333,8 @@ export function __resetForTests(): void {
   deps = defaultDeps();
   active = null;
   activeView = null;
-  uiHosts = 0;
+  uiHosts = [];
+  uiHostListeners.clear();
   requireUiHost = true;
   stateListeners.clear();
   sessionListeners.clear();

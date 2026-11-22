@@ -1,34 +1,42 @@
-/** ISO 4217 numérico → alfabético, para formatação. */
-const CURRENCY_ALPHA: Record<string, string> = {
-  '986': 'BRL',
-  '840': 'USD',
-  '978': 'EUR',
-  '032': 'ARS',
-  '152': 'CLP',
-  '858': 'UYU',
+/** ISO 4217 numérico → alfabético e casas decimais (expoente da unidade menor). */
+const CURRENCIES: Record<string, { alpha: string; exponent: number }> = {
+  '986': { alpha: 'BRL', exponent: 2 },
+  '840': { alpha: 'USD', exponent: 2 },
+  '978': { alpha: 'EUR', exponent: 2 },
+  '032': { alpha: 'ARS', exponent: 2 },
+  '152': { alpha: 'CLP', exponent: 0 },
+  '858': { alpha: 'UYU', exponent: 2 },
 };
 
-/** Valor em centavos formatado na moeda (§12.3: a formatação só existe na UI). */
+function manual(prefix: string, value: number, exponent: number): string {
+  const [int, decimals] = value.toFixed(exponent).split('.');
+  const grouped = (int ?? '0').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${prefix} ${grouped}${decimals ? `,${decimals}` : ''}`;
+}
+
+/**
+ * Valor na unidade menor da moeda (centavos), formatado (§12.3: a formatação só existe
+ * na UI). Moeda fora da tabela mostra o código numérico, nunca um símbolo errado.
+ */
 export function formatAmount(
   amountCents: number,
   currencyCode: string
 ): string {
-  const currency = CURRENCY_ALPHA[currencyCode];
-  const value = amountCents / 100;
-  if (currency) {
-    try {
-      return new Intl.NumberFormat('pt-BR', {
-        style: 'currency',
-        currency,
-      }).format(value);
-    } catch {
-      // Ambiente sem Intl completo: cai para o formato manual abaixo.
-    }
+  const currency = CURRENCIES[currencyCode];
+  if (!currency) return manual(currencyCode, amountCents / 100, 2);
+  const value = amountCents / 10 ** currency.exponent;
+  try {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: currency.alpha,
+      minimumFractionDigits: currency.exponent,
+      maximumFractionDigits: currency.exponent,
+    }).format(value);
+  } catch {
+    // Ambiente sem Intl completo: formato manual.
+    const prefix = currency.alpha === 'BRL' ? 'R$' : currency.alpha;
+    return manual(prefix, value, currency.exponent);
   }
-  const prefix = currency === 'BRL' || !currency ? 'R$' : currency;
-  const [int, cents] = value.toFixed(2).split('.');
-  const grouped = (int ?? '0').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  return `${prefix} ${grouped},${cents}`;
 }
 
 /** AAMM → MM/AA. */

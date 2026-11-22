@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import { brandLabel, formatAmount, formatExpiry } from '../format';
+import type { CashTapAppearance } from '../../types';
 import {
   DARK_COLORS,
   DEFAULT_TEXTS,
@@ -54,12 +55,75 @@ describe('resolveAppearance (E6-H3)', () => {
     expect(theme.colors.primaryStrong).toBe('#000000');
   });
 
-  it('cor não hexadecimal não quebra a derivação', () => {
+  it('cor nomeada (não derivável) não quebra a derivação', () => {
     const { theme } = resolveAppearance({
-      colors: { primary: 'rgb(1,2,3)', success: 'green', error: 'red' },
+      colors: { primary: 'purple', success: 'green', error: 'red' },
     });
-    expect(theme.colors.primary).toBe('rgb(1,2,3)');
+    expect(theme.colors.primary).toBe('purple');
     expect(theme.colors.primaryStrong).toBe(DARK_COLORS.primaryStrong);
+    expect(theme.colors.successSoft).toBe(DARK_COLORS.successSoft);
+  });
+
+  it('rgb() também é derivado', () => {
+    const { theme } = resolveAppearance({
+      colors: { primary: 'rgb(11, 122, 85)' },
+    });
+    expect(theme.colors.primaryStrong).toBe(
+      resolveAppearance({ colors: { primary: '#0B7A55' } }).theme.colors
+        .primaryStrong
+    );
+  });
+
+  it('trocar texto e fundo deriva texto secundário e superfícies (contraste)', () => {
+    const { theme } = resolveAppearance({
+      colors: { background: '#FFFFFF', text: '#0E2219' },
+    });
+    // 30% do caminho entre o texto e o fundo: escuro o bastante sobre branco
+    expect(theme.colors.textMuted).toBe('#56645E');
+    expect(theme.colors.surface).toBe('rgba(14, 34, 25, 0.07)');
+    expect(theme.colors.surfaceStrong).toBe('rgba(14, 34, 25, 0.14)');
+    expect(theme.colors.border).toBe('rgba(14, 34, 25, 0.14)');
+    expect(theme.colors.line).toBe('rgba(14, 34, 25, 0.24)');
+  });
+
+  it('só o fundo trocado ainda recalcula o texto secundário', () => {
+    const { theme } = resolveAppearance({
+      mode: 'light',
+      colors: { background: 'rgba(250, 250, 250, 0.9)' },
+    });
+    expect(theme.colors.textMuted).not.toBe(LIGHT_COLORS.textMuted);
+    expect(theme.colors.surface).toBe(LIGHT_COLORS.surface);
+  });
+
+  it('aparência inválida vinda de JS sem tipos é ignorada, sem derrubar o modal', () => {
+    const { theme, texts, haptics } = resolveAppearance({
+      mode: 'neon',
+      colors: { primary: 42, text: '' },
+      texts: { waitingTitle: { nested: true }, cancel: 'Voltar' },
+      fontFamily: 7,
+      borderRadius: -3,
+      haptics: 'sim',
+    } as unknown as CashTapAppearance);
+    expect(theme.colors).toEqual(DARK_COLORS);
+    expect(texts.waitingTitle).toBe(DEFAULT_TEXTS.waitingTitle);
+    expect(texts.cancel).toBe('Voltar');
+    expect(theme.fontFamily).toBeUndefined();
+    expect(theme.borderRadius).toBe(16);
+    expect(haptics).toBe(true);
+    expect(
+      resolveAppearance({ borderRadius: Infinity }).theme.borderRadius
+    ).toBe(16);
+  });
+
+  it('haptics pode ser desligado pelo integrador', () => {
+    expect(resolveAppearance().haptics).toBe(true);
+    expect(resolveAppearance({ haptics: false }).haptics).toBe(false);
+  });
+
+  it('paletas e textos padrão são imutáveis', () => {
+    expect(Object.isFrozen(DARK_COLORS)).toBe(true);
+    expect(Object.isFrozen(LIGHT_COLORS)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_TEXTS)).toBe(true);
   });
 
   it('deriva os tons suaves de sucesso e erro', () => {
@@ -119,8 +183,15 @@ describe('formatação (§12.3)', () => {
     );
   });
 
-  it('moeda desconhecida cai no formato manual', () => {
-    expect(formatAmount(500, '999')).toBe('R$ 5,00');
+  it('moeda fora da tabela mostra o código numérico, nunca um símbolo errado', () => {
+    expect(formatAmount(500, '826')).toBe('826 5,00');
+    expect(formatAmount(123456, '999')).toBe('999 1.234,56');
+  });
+
+  it('respeita o expoente da moeda (CLP não tem centavos)', () => {
+    expect(formatAmount(5000, '152').replace(/\s/g, ' ')).toMatch(/5\.000$/);
+    expect(formatAmount(5000, '152')).not.toContain(',');
+    expect(formatAmount(1050, '840').replace(/\s/g, ' ')).toMatch(/10,50$/);
   });
 
   it('validade AAMM vira MM/AA', () => {

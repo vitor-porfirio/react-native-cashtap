@@ -1,10 +1,12 @@
 import {
   useEffect,
   useMemo,
+  useState,
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   Animated,
   Modal,
@@ -33,12 +35,19 @@ import {
   NfcOffIcon,
   RetryIcon,
 } from './icons';
-import { useEntrance, useLoop, useReduceMotion, useShake } from './motion';
+import {
+  ReduceMotionProvider,
+  useEntrance,
+  useLoop,
+  useReduceMotion,
+  useShake,
+} from './motion';
 import { NfcStage } from './NfcStage';
 import {
   fill,
   resolveAppearance,
   type CashTapAppearance,
+  type CashTapTexts,
   type ResolvedAppearance,
 } from './theme';
 
@@ -50,7 +59,21 @@ const HAPTICS = {
   error: [0, 80, 40, 80],
 };
 
-const STEP_LABELS = ['PPSE', 'AID', 'GPO', 'READ'];
+const STEP_TEXTS = [
+  'stepConnect',
+  'stepApplication',
+  'stepAuthorize',
+  'stepRecords',
+] as const satisfies ReadonlyArray<keyof CashTapTexts>;
+
+/**
+ * RN-01: num aparelho sem NFC a resposta chega em poucos ms e o modal nem deve aparecer.
+ * A tela "Verificando…" só abre se a verificação inicial passar desse tempo.
+ */
+export const CHECKING_GRACE_MS = 250;
+
+/** Com edge-to-edge (padrão no RN 0.88) o Modal desenha sob a barra de navegação de 3 botões (48 dp). */
+const NAV_BAR_ALLOWANCE = 48;
 
 function useActiveSession(): ActiveSession | null {
   return useSyncExternalStore(
@@ -69,42 +92,105 @@ function isVisible(session: ActiveSession | null): session is ActiveSession {
   return true;
 }
 
+/** Segura a primeira verificação por `CHECKING_GRACE_MS` (RN-01: sem piscar a folha). */
+function useInitialCheckGrace(session: ActiveSession | null): boolean {
+  const [graceOver, setGraceOver] = useState<string | null>(null);
+  const captureId = session?.captureId ?? null;
+  const holding =
+    session !== null &&
+    session.state === 'CHECKING' &&
+    !session.nfcChecked &&
+    graceOver !== captureId;
+  useEffect(() => {
+    if (!holding || captureId === null) return;
+    const timer = setTimeout(() => setGraceOver(captureId), CHECKING_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [holding, captureId]);
+  return holding;
+}
+
+/** Título anunciado pelo leitor de tela a cada troca de estado. */
+function stateTitle(session: ActiveSession, texts: CashTapTexts): string {
+  switch (session.state) {
+    case 'CHECKING':
+      return texts.checkingTitle;
+    case 'WAITING_CARD':
+      return texts.waitingTitle;
+    case 'READING':
+      return texts.readingTitle;
+    case 'RECOVERABLE_FAILURE':
+      return texts.recoverableTitle;
+    case 'PROCESSING':
+      return texts.processingTitle;
+    case 'SUCCESS':
+      return texts.successTitle;
+    case 'TIMEOUT':
+      return texts.timeoutTitle;
+    case 'ERROR':
+      if (session.error?.code === 'NFC_DISABLED') return texts.nfcDisabledTitle;
+      return session.error?.code === 'UNSUPPORTED_BRAND'
+        ? texts.unsupportedBrandTitle
+        : texts.errorTitle;
+    default:
+      return '';
+  }
+}
+
+/**
+ * Views recém-montadas não são anunciadas de forma confiável por live region no
+ * Android; o anúncio explícito garante que o TalkBack fale cada troca de estado.
+ */
+function useStateAnnouncement(
+  session: ActiveSession | null,
+  visible: boolean,
+  texts: CashTapTexts
+) {
+  const title = visible && session ? stateTitle(session, texts) : '';
+  useEffect(() => {
+    if (title) AccessibilityInfo.announceForAccessibility(title);
+  }, [title]);
+}
+
 export function CashTapModal({
   appearance,
 }: {
   appearance?: CashTapAppearance;
 }) {
   const session = useActiveSession();
-  const visible = isVisible(session);
+  const holding = useInitialCheckGrace(session);
+  const visible = isVisible(session) && !holding;
   const resolved = useMemo(
     () => resolveAppearance(appearance, session?.params.appearance),
     [appearance, session?.params.appearance]
   );
   const { colors, borderRadius } = resolved.theme;
+  useStateAnnouncement(session, visible, resolved.texts);
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      statusBarTranslucent
-      onRequestClose={cancel}
-      testID="cashtap-modal"
-    >
-      <View style={[styles.scrim, { backgroundColor: colors.scrim }]}>
-        {visible && (
-          <Sheet appearance={resolved} borderRadius={borderRadius}>
-            <Header appearance={resolved} />
-            <Amount session={session} appearance={resolved} />
-            <StateBody
-              key={session.state}
-              session={session}
-              appearance={resolved}
-            />
-          </Sheet>
-        )}
-      </View>
-    </Modal>
+    <ReduceMotionProvider>
+      <Modal
+        visible={visible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={cancel}
+        testID="cashtap-modal"
+      >
+        <View style={[styles.scrim, { backgroundColor: colors.scrim }]}>
+          {visible && (
+            <Sheet appearance={resolved} borderRadius={borderRadius}>
+              <Header appearance={resolved} />
+              <Amount session={session} appearance={resolved} />
+              <StateBody
+                key={session.state}
+                session={session}
+                appearance={resolved}
+              />
+            </Sheet>
+          )}
+        </View>
+      </Modal>
+    </ReduceMotionProvider>
   );
 }
 
@@ -124,7 +210,7 @@ function Sheet({
   const { colors } = appearance.theme;
   return (
     <Animated.View
-      accessibilityViewIsModal
+      testID="cashtap-sheet"
       style={[
         styles.sheet,
         {
@@ -151,7 +237,7 @@ function Sheet({
 }
 
 function useText(appearance: ResolvedAppearance) {
-  const { colors, fontFamily, monoFontFamily } = appearance.theme;
+  const { colors, fontFamily } = appearance.theme;
   return useMemo(() => {
     const font: TextStyle = fontFamily ? { fontFamily } : {};
     return {
@@ -160,9 +246,8 @@ function useText(appearance: ResolvedAppearance) {
       body: [styles.body, font, { color: colors.textMuted }],
       label: [styles.label, font, { color: colors.textMuted }],
       strong: [styles.strong, font, { color: colors.text }],
-      mono: [styles.mono, { fontFamily: monoFontFamily, color: colors.text }],
     };
-  }, [colors, fontFamily, monoFontFamily]);
+  }, [colors, fontFamily]);
 }
 
 function Header({ appearance }: { appearance: ResolvedAppearance }) {
@@ -289,10 +374,7 @@ function Texts({
   const text = useText(appearance);
   return (
     <View style={styles.texts}>
-      <Text
-        style={small ? text.titleS : text.title}
-        accessibilityLiveRegion="polite"
-      >
+      <Text style={small ? text.titleS : text.title} accessibilityRole="header">
         {title}
       </Text>
       {hint ? <Text style={text.body}>{hint}</Text> : null}
@@ -401,10 +483,11 @@ function Spinner({
   );
 }
 
-function useHaptic(pattern: number | number[]) {
+function useHaptic(appearance: ResolvedAppearance, pattern: number | number[]) {
+  const enabled = appearance.haptics;
   useEffect(() => {
-    Vibration.vibrate(pattern);
-  }, [pattern]);
+    if (enabled) Vibration.vibrate(pattern);
+  }, [enabled, pattern]);
 }
 
 // ---- Uma view por estado ----
@@ -490,9 +573,9 @@ function WaitingView({ session, appearance }: ViewProps) {
 
 function ReadingView({ session, appearance }: ViewProps) {
   const reduce = useReduceMotion();
-  const { colors, monoFontFamily } = appearance.theme;
-  useHaptic(HAPTICS.cardDetected);
-  const done = Math.max(0, Math.min(4, session.progress ?? 0));
+  const { colors, fontFamily } = appearance.theme;
+  useHaptic(appearance, HAPTICS.cardDetected);
+  const done = Math.max(0, Math.min(STEP_TEXTS.length, session.progress));
   return (
     <View style={styles.body} testID="cashtap-state-reading">
       <Stage>
@@ -507,7 +590,13 @@ function ReadingView({ session, appearance }: ViewProps) {
         title={appearance.texts.readingTitle}
         hint={appearance.texts.readingHint}
       />
-      <View style={styles.progress} testID="cashtap-progress">
+      <View
+        style={styles.progress}
+        testID="cashtap-progress"
+        accessible
+        accessibilityRole="progressbar"
+        accessibilityValue={{ min: 0, max: STEP_TEXTS.length, now: done }}
+      >
         <View style={[styles.track, { backgroundColor: colors.surfaceStrong }]}>
           <View
             testID="cashtap-progress-fill"
@@ -521,13 +610,14 @@ function ReadingView({ session, appearance }: ViewProps) {
           />
         </View>
         <View style={styles.steps}>
-          {STEP_LABELS.map((label, i) => (
+          {STEP_TEXTS.map((key, i) => (
             <Text
-              key={label}
+              key={key}
+              testID={`cashtap-step-${i}`}
               style={[
                 styles.step,
+                fontFamily ? { fontFamily } : null,
                 {
-                  fontFamily: monoFontFamily,
                   color:
                     i < done
                       ? colors.text
@@ -537,7 +627,7 @@ function ReadingView({ session, appearance }: ViewProps) {
                 },
               ]}
             >
-              {label}
+              {appearance.texts[key]}
             </Text>
           ))}
         </View>
@@ -602,7 +692,7 @@ function RecoverableView({ session, appearance }: ViewProps) {
   const text = useText(appearance);
   const { colors } = appearance.theme;
   const spin = useLoop(8000, { enabled: !reduce });
-  useHaptic(HAPTICS.retry);
+  useHaptic(appearance, HAPTICS.retry);
   return (
     <View style={styles.body} testID="cashtap-state-recoverable">
       <Stage>
@@ -708,7 +798,7 @@ function SuccessView({ session, appearance }: ViewProps) {
   const rippleA = useEntrance(1400, { delay: 300, enabled: !reduce });
   const rippleB = useEntrance(1400, { delay: 800, enabled: !reduce });
   const rise = useEntrance(400, { delay: 350, enabled: !reduce });
-  useHaptic(HAPTICS.success);
+  useHaptic(appearance, HAPTICS.success);
   const card = session.card;
   const ripple = (value: Animated.Value) => (
     <Animated.View
@@ -805,8 +895,8 @@ function SuccessView({ session, appearance }: ViewProps) {
 function TimeoutView({ session, appearance }: ViewProps) {
   const reduce = useReduceMotion();
   const { colors } = appearance.theme;
-  useHaptic(HAPTICS.error);
-  const seconds = Math.round((session.params.timeoutMs ?? 30_000) / 1000);
+  useHaptic(appearance, HAPTICS.error);
+  const seconds = Math.round(session.params.timeoutMs / 1000);
   return (
     <View style={styles.body} testID="cashtap-state-timeout">
       <Stage>
@@ -833,7 +923,7 @@ function TimeoutView({ session, appearance }: ViewProps) {
 function ErrorView({ session, appearance }: ViewProps) {
   const reduce = useReduceMotion();
   const { colors, monoFontFamily } = appearance.theme;
-  useHaptic(HAPTICS.error);
+  useHaptic(appearance, HAPTICS.error);
   const code = session.error?.code ?? 'UNKNOWN';
   const title =
     code === 'UNSUPPORTED_BRAND'
@@ -944,7 +1034,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     paddingTop: 18,
     paddingHorizontal: 20,
-    paddingBottom: 30,
+    paddingBottom: Math.max(30, NAV_BAR_ALLOWANCE + 8),
     elevation: 24,
   },
   sheetHighlight: {
@@ -996,11 +1086,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
   },
-  body15: { fontSize: 15 },
-  bodyText: { fontSize: 15, lineHeight: 22, textAlign: 'center' },
   label: { fontSize: 14, lineHeight: 20 },
   strong: { fontSize: 15, fontWeight: '600' },
-  mono: { fontSize: 12 },
   actionSpacer: { height: 52 },
   actions: { gap: 10 },
   button: {

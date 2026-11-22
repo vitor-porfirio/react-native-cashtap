@@ -7,7 +7,8 @@ import {
   jest,
 } from '@jest/globals';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { Text, Vibration } from 'react-native';
+import { useEffect } from 'react';
+import { AccessibilityInfo, StyleSheet, Text, Vibration } from 'react-native';
 import {
   __resetForTests,
   __setDepsForTests,
@@ -21,7 +22,14 @@ import type {
 } from '../../native';
 import type { CaptureResult, NfcStatus } from '../../types';
 import { CashTapProvider } from '../CashTapProvider';
-import type { CashTapAppearance } from '../theme';
+import { CHECKING_GRACE_MS } from '../CashTapModal';
+import {
+  DARK_COLORS,
+  DEFAULT_TEXTS,
+  type CashTapAppearance,
+  type CashTapTexts,
+} from '../theme';
+import { onStateChange } from '../../core/controller';
 
 const mockOpenSettings = jest.fn();
 jest.mock('../../native', () => {
@@ -71,9 +79,9 @@ class FakeNative implements NativePort {
   tap() {
     this.tagListeners.forEach((l) => l());
   }
-  step(step: DiagnosticExchange['step']) {
+  step(step: DiagnosticExchange['step'], sw = '9000') {
     this.diagListeners.forEach((l) =>
-      l({ step, command: '00', response: '', sw: '9000', durationMs: 1 })
+      l({ step, command: '', response: '', sw, durationMs: 1 })
     );
   }
   finishRead(o: NativeReadOutcome) {
@@ -83,21 +91,24 @@ class FakeNative implements NativePort {
 
 let native: FakeNative;
 
+/** Resolve promises pendentes e timers de 0 ms, sempre dentro de um act aguardado. */
 async function settle() {
   await act(async () => {
     for (let i = 0; i < 5; i++) {
-      await Promise.resolve();
-      jest.advanceTimersByTime(0);
+      await jest.advanceTimersByTimeAsync(0);
     }
   });
 }
 
 async function advance(ms: number) {
   await act(async () => {
-    jest.advanceTimersByTime(ms);
+    await jest.advanceTimersByTimeAsync(ms);
   });
   await settle();
 }
+
+const flat = (testID: string) =>
+  StyleSheet.flatten(screen.getByTestId(testID).props.style);
 
 async function renderApp(appearance?: CashTapAppearance) {
   return await render(
@@ -119,6 +130,8 @@ async function start(
 }
 
 beforeEach(() => {
+  // Vibration e AccessibilityInfo já são jest.fn no preset do RN: spyOn não zera as chamadas.
+  jest.clearAllMocks();
   jest.useFakeTimers();
   native = new FakeNative();
   __resetForTests();
@@ -191,12 +204,28 @@ describe('CashTapProvider (E6-H1)', () => {
     expect(result()).toMatchObject({ status: 'success' });
   });
 
-  it('verificando mostra o spinner e o texto do design', async () => {
+  it('verificação demorada mostra o spinner e o texto do design após a tolerância', async () => {
     native.startReaderMode.mockImplementationOnce(() => new Promise(() => {}));
     await renderApp();
     await start();
+    expect(screen.queryByTestId('cashtap-state-checking')).toBeNull();
+    await advance(CHECKING_GRACE_MS);
     expect(screen.getByTestId('cashtap-state-checking')).toBeTruthy();
     expect(screen.getByText('Preparando o leitor NFC')).toBeTruthy();
+  });
+
+  it('anuncia cada troca de estado ao leitor de tela (TalkBack)', async () => {
+    const announce = jest
+      .spyOn(AccessibilityInfo, 'announceForAccessibility')
+      .mockImplementation(() => {});
+    await renderApp();
+    await start();
+    await act(async () => native.tap());
+    await settle();
+    expect(announce.mock.calls.map(([text]) => text)).toEqual([
+      'Aproxime o cartão',
+      'Lendo cartão… não afaste',
+    ]);
   });
 
   it('barra de progresso avança com as etapas do diálogo', async () => {
@@ -204,15 +233,24 @@ describe('CashTapProvider (E6-H1)', () => {
     await start();
     await act(async () => native.tap());
     await settle();
-    const width = () => screen.getByTestId('cashtap-progress-fill').props.style;
-    const before = JSON.stringify(width());
+    const bar = () => screen.getByRole('progressbar');
+    expect(bar().props.accessibilityValue).toEqual({ min: 0, max: 4, now: 0 });
     await act(async () => {
       native.step('SELECT_PPSE');
+      native.step('SELECT_AID', '6A82');
       native.step('SELECT_AID');
     });
     await settle();
-    expect(JSON.stringify(width())).not.toBe(before);
-    expect(JSON.stringify(width())).toContain('50%');
+    expect(bar().props.accessibilityValue).toEqual({ min: 0, max: 4, now: 2 });
+    expect(flat('cashtap-progress-fill').width).toBe('50%');
+    // concluídas no texto, a atual em destaque, as próximas apagadas
+    expect(flat('cashtap-step-0').color).toBe(DARK_COLORS.text);
+    expect(flat('cashtap-step-1').color).toBe(DARK_COLORS.text);
+    expect(flat('cashtap-step-2').color).toBe(DARK_COLORS.primarySoft);
+    expect(flat('cashtap-step-3').color).toBe(DARK_COLORS.textMuted);
+    // rótulos neutros, sem jargão de protocolo para o operador
+    expect(screen.getByText('Conexão')).toBeTruthy();
+    expect(screen.queryByText('PPSE')).toBeNull();
   });
 
   it('falha recuperável mostra a orientação e o contador de tentativas', async () => {
@@ -257,7 +295,14 @@ describe('CashTapProvider (E6-H1)', () => {
     await settle();
     expect(screen.getByTestId('cashtap-cancelling')).toBeTruthy();
     expect(screen.getByText('Cancelando…')).toBeTruthy();
-    expect(native.cancelRead).toHaveBeenCalled();
+    expect(native.cancelRead).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByTestId('cashtap-cancelling').props.accessibilityState
+    ).toMatchObject({ disabled: true });
+    await fireEvent.press(screen.getByTestId('cashtap-cancelling'));
+    await settle();
+    expect(native.cancelRead).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('cashtap-cancel')).toBeNull();
     await act(async () =>
       native.finishRead({ ok: false, code: 'CANCELLED_BY_USER', detail: '' })
     );
@@ -332,12 +377,54 @@ describe('CashTapProvider (E6-H1)', () => {
     expect(result()).toMatchObject({ status: 'cancelled' });
   });
 
-  it('RN-01: sem NFC no aparelho, nenhuma tela é aberta', async () => {
-    native.startResult = { ok: false, code: 'NFC_UNSUPPORTED', detail: '' };
+  it('RN-01: sem NFC no aparelho, a folha nunca aparece — nem por um instante', async () => {
+    let answer: (() => void) | null = null;
+    native.startReaderMode.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answer = () =>
+            resolve({ ok: false, code: 'NFC_UNSUPPORTED', detail: '' });
+        })
+    );
+    await renderApp();
+    let result: CaptureResult | undefined;
+    await act(async () => {
+      capture({ amountCents: 100 }).then((r) => (result = r));
+    });
+    // verificação em curso, dentro da tolerância: nada na tela
+    expect(screen.queryByTestId('cashtap-sheet')).toBeNull();
+    // resposta chega; só microtarefas, nenhum timer avançado (FINISH ainda pendente)
+    await act(async () => {
+      answer?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.queryByTestId('cashtap-sheet')).toBeNull();
+    expect(screen.queryByTestId('cashtap-state-error')).toBeNull();
+    expect(Vibration.vibrate).not.toHaveBeenCalled();
+    await settle();
+    expect(screen.queryByTestId('cashtap-sheet')).toBeNull();
+    expect(result).toMatchObject({ error: { code: 'NFC_UNSUPPORTED' } });
+  });
+
+  it('verificação rápida não pisca a tela "Verificando…"', async () => {
+    const announce = jest
+      .spyOn(AccessibilityInfo, 'announceForAccessibility')
+      .mockImplementation(() => {});
+    await renderApp();
+    await start();
+    expect(screen.getByTestId('cashtap-state-waiting')).toBeTruthy();
+    expect(announce).not.toHaveBeenCalledWith('Verificando…');
+  });
+
+  it('botão voltar do Android cancela a captura', async () => {
     await renderApp();
     const result = await start();
-    expect(screen.queryByTestId('cashtap-state-error')).toBeNull();
-    expect(result()).toMatchObject({ error: { code: 'NFC_UNSUPPORTED' } });
+    await act(async () => {
+      screen.getByTestId('cashtap-modal').props.onRequestClose();
+    });
+    await settle();
+    expect(result()).toMatchObject({ status: 'cancelled' });
   });
 
   it('processando tem tela própria', async () => {
@@ -351,6 +438,43 @@ describe('CashTapProvider (E6-H1)', () => {
       await Promise.resolve();
     });
     expect(screen.getByTestId('cashtap-state-processing')).toBeTruthy();
+  });
+});
+
+describe('Provider (E6-H1, D020)', () => {
+  it('filho que chama capture() no próprio efeito de montagem não recebe erro de integração', async () => {
+    let outcome: unknown;
+    function AutoCharge() {
+      useEffect(() => {
+        capture({ amountCents: 100 }).then(
+          (r) => (outcome = r),
+          (e) => (outcome = e)
+        );
+      }, []);
+      return null;
+    }
+    await render(
+      <CashTapProvider>
+        <AutoCharge />
+      </CashTapProvider>
+    );
+    await settle();
+    expect(screen.getByTestId('cashtap-state-waiting')).toBeTruthy();
+    expect(outcome).toBeUndefined();
+  });
+
+  it('dois Providers montados exibem um único modal e avisam em desenvolvimento', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    await render(
+      <CashTapProvider>
+        <CashTapProvider>
+          <Text>app</Text>
+        </CashTapProvider>
+      </CashTapProvider>
+    );
+    await start();
+    expect(screen.getAllByTestId('cashtap-sheet')).toHaveLength(1);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -371,16 +495,246 @@ describe('personalização (E6-H3)', () => {
     expect(screen.getByText('Desistir')).toBeTruthy();
   });
 
-  it('tema não altera o fluxo: mesmas telas e mesmo timeout', async () => {
-    await renderApp({
-      mode: 'light',
-      colors: { primary: '#0B7A55' },
-      borderRadius: 8,
+  const FEIRA_VERDE: CashTapAppearance = {
+    mode: 'light',
+    colors: {
+      primary: '#0B7A55',
+      background: '#FAFAF7',
+      text: '#0E2219',
+      success: '#0B7A55',
+      error: '#B42318',
+    },
+    borderRadius: 8,
+    fontFamily: 'IBM Plex Sans',
+  };
+
+  it('cores, fonte e raio do tema chegam aos elementos do modal', async () => {
+    await renderApp(FEIRA_VERDE);
+    await start({ amountCents: 100, timeoutMs: 10_000 });
+    expect(flat('cashtap-sheet')).toMatchObject({
+      backgroundColor: '#FAFAF7',
+      borderTopLeftRadius: 16,
+      borderTopRightRadius: 16,
+    });
+    expect(flat('cashtap-amount')).toMatchObject({
+      color: '#0E2219',
       fontFamily: 'IBM Plex Sans',
     });
-    await start({ amountCents: 100, timeoutMs: 10_000 });
-    expect(screen.getByTestId('cashtap-state-waiting')).toBeTruthy();
+    expect(
+      StyleSheet.flatten(screen.getByText('Aproxime o cartão').props.style)
+    ).toMatchObject({ color: '#0E2219', fontFamily: 'IBM Plex Sans' });
+    expect(flat('cashtap-cancel')).toMatchObject({ borderRadius: 8 });
+    expect(
+      StyleSheet.flatten(screen.getByText('Cancelar').props.style)
+    ).toMatchObject({ fontFamily: 'IBM Plex Sans' });
     await advance(10_000);
-    expect(screen.getByTestId('cashtap-state-timeout')).toBeTruthy();
+    expect(flat('cashtap-close')).toMatchObject({
+      backgroundColor: '#0B7A55',
+      borderRadius: 8,
+    });
+  });
+
+  it('haptics: false desliga a vibração sem mudar o fluxo', async () => {
+    await renderApp({ haptics: false });
+    const result = await start();
+    await act(async () => native.tap());
+    await settle();
+    await act(async () => native.finishRead({ ok: true, card }));
+    await settle();
+    expect(screen.getByTestId('cashtap-state-success')).toBeTruthy();
+    expect(Vibration.vibrate).not.toHaveBeenCalled();
+    await advance(DEFAULT_DISPLAY_DURATIONS.success);
+    expect(result()).toMatchObject({ status: 'success' });
+  });
+});
+
+/**
+ * Critério #26: nenhuma opção de aparência altera transições. O mesmo roteiro roda sem
+ * aparência, com aparência no Provider e com aparência na captura; o rastro tem de ser idêntico.
+ */
+describe('aparência não altera o fluxo (#26)', () => {
+  const LOOK: CashTapAppearance = {
+    mode: 'light',
+    colors: { primary: '#0B7A55', text: '#0E2219', background: '#FFFFFF' },
+    borderRadius: 4,
+    fontFamily: 'IBM Plex Sans',
+    texts: { cancel: 'Voltar', waitingTitle: 'Encoste' },
+    haptics: false,
+  };
+  type Variant = 'none' | 'provider' | 'capture';
+  type Script = 'success' | 'cancel' | 'timeout' | 'retry';
+
+  async function trace(variant: Variant, script: Script) {
+    const states: string[] = [];
+    const unsubscribe = onStateChange((e) => states.push(e.state));
+    const cancelVisible: boolean[] = [];
+    const look = () =>
+      cancelVisible.push(screen.queryByTestId('cashtap-cancel') !== null);
+    const view = await renderApp(variant === 'provider' ? LOOK : undefined);
+    const result = await start({
+      amountCents: 100,
+      timeoutMs: 10_000,
+      ...(variant === 'capture' && { appearance: LOOK }),
+    });
+    look();
+    if (script === 'timeout') {
+      await advance(10_000);
+      await advance(DEFAULT_DISPLAY_DURATIONS.failure);
+    } else if (script === 'cancel') {
+      await fireEvent.press(screen.getByTestId('cashtap-cancel'));
+      await settle();
+    } else {
+      await act(async () => native.tap());
+      await settle();
+      look();
+      if (script === 'retry') {
+        await act(async () =>
+          native.finishRead({ ok: false, code: 'CARD_REMOVED', detail: '' })
+        );
+        await settle();
+        look();
+        await advance(DEFAULT_DISPLAY_DURATIONS.recovery);
+        await act(async () => native.tap());
+        await settle();
+      }
+      await act(async () => native.finishRead({ ok: true, card }));
+      await settle();
+      await advance(DEFAULT_DISPLAY_DURATIONS.success);
+    }
+    const final = result();
+    unsubscribe();
+    await view.unmount();
+    __resetForTests();
+    native = new FakeNative();
+    __setDepsForTests({ native }, { requireUiHost: true });
+    return {
+      states,
+      cancelVisible,
+      status: final?.status,
+      attempts: final?.meta.attempts,
+      durationMs: final?.meta.durationMs,
+    };
+  }
+
+  it.each<Script>(['success', 'cancel', 'timeout', 'retry'])(
+    'roteiro %s: mesmo rastro com e sem aparência',
+    async (script) => {
+      const base = await trace('none', script);
+      expect(base.status).toBeDefined();
+      expect(await trace('provider', script)).toEqual(base);
+      expect(await trace('capture', script)).toEqual(base);
+    }
+  );
+});
+
+describe('textos customizados (E6-H3)', () => {
+  const KEYS = Object.keys(DEFAULT_TEXTS) as Array<keyof CashTapTexts>;
+  const custom = Object.fromEntries(
+    KEYS.map((key) => {
+      const original = DEFAULT_TEXTS[key];
+      const placeholders = original.match(/\{\w+\}/g) ?? [];
+      return [key, `«${key}»${placeholders.join(' ')}`];
+    })
+  ) as CashTapTexts;
+  const seen = new Set<string>();
+  const collect = () => {
+    for (const key of KEYS) {
+      if (screen.queryAllByText(new RegExp(`«${key}»`)).length > 0) {
+        seen.add(key);
+      }
+    }
+  };
+
+  it('cada texto de CashTapTexts aparece na tela do estado correspondente', async () => {
+    // espera, leitura, cancelamento em curso
+    native.startReaderMode.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 1000))
+    );
+    let view = await renderApp({ texts: custom });
+    await start({ amountCents: 100, maxRetries: 1 });
+    await advance(CHECKING_GRACE_MS);
+    collect(); // verificando
+    await advance(1000);
+    collect(); // aguardando
+    await act(async () => native.tap());
+    await settle();
+    collect(); // lendo + etapas
+    await act(async () =>
+      native.finishRead({ ok: false, code: 'CARD_REMOVED', detail: '' })
+    );
+    await settle();
+    collect(); // falha recuperável + tentativa
+    await advance(DEFAULT_DISPLAY_DURATIONS.recovery);
+    collect(); // aguardando de novo (dica de retentativa)
+    await act(async () => native.tap());
+    await settle();
+    await fireEvent.press(screen.getByTestId('cashtap-cancel'));
+    await settle();
+    collect(); // cancelando
+    await act(async () => {
+      native.finishRead({ ok: true, card });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await settle();
+    await view.unmount();
+
+    // processando e sucesso
+    __resetForTests();
+    native = new FakeNative();
+    __setDepsForTests({ native }, { requireUiHost: true });
+    view = await renderApp({ texts: custom });
+    await start();
+    await act(async () => native.tap());
+    await settle();
+    await act(async () => {
+      native.finishRead({ ok: true, card });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    collect(); // processando
+    await settle();
+    collect(); // sucesso + validade
+    await advance(DEFAULT_DISPLAY_DURATIONS.success);
+    await view.unmount();
+
+    // tempo esgotado
+    __resetForTests();
+    native = new FakeNative();
+    __setDepsForTests({ native }, { requireUiHost: true });
+    view = await renderApp({ texts: custom });
+    await start({ amountCents: 100, timeoutMs: 10_000 });
+    await advance(10_000);
+    collect();
+    await view.unmount();
+
+    // erros: genérico e bandeira
+    for (const code of ['UNSUPPORTED_BRAND', 'INCOMPLETE_DATA'] as const) {
+      __resetForTests();
+      native = new FakeNative();
+      __setDepsForTests({ native }, { requireUiHost: true });
+      view = await renderApp({ texts: custom });
+      await start();
+      await act(async () => native.tap());
+      await settle();
+      await act(async () => native.finishRead({ ok: false, code, detail: '' }));
+      await settle();
+      collect();
+      await view.unmount();
+    }
+
+    // NFC desligado
+    __resetForTests();
+    native = new FakeNative();
+    __setDepsForTests({ native }, { requireUiHost: true });
+    native.startResult = { ok: false, code: 'NFC_DISABLED', detail: '' };
+    view = await renderApp({ texts: custom });
+    await start();
+    collect();
+    await view.unmount();
+
+    const missing = KEYS.filter((key) => !seen.has(key));
+    expect(missing).toEqual([]);
   });
 });

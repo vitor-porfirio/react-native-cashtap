@@ -98,6 +98,12 @@ class FakeNative implements NativePort {
     this.tagListeners.forEach((l) => l());
   }
 
+  exchange(step: DiagnosticExchange['step'], sw = '9000') {
+    this.diagnosticListeners.forEach((l) =>
+      l({ step, command: '', response: '', sw, durationMs: 1 })
+    );
+  }
+
   setNfc(status: NfcStatus) {
     this.statusListeners.forEach((l) => l(status));
   }
@@ -161,7 +167,8 @@ describe('capture() — caminho feliz (E5-H1)', () => {
     clock += 100;
     native.tap();
     await flush();
-    expect(native.readCalls).toEqual([[1050, '0986', true]]);
+    // Sem `diagnostics`, o nativo só manda etapa e SW (minimização — D019).
+    expect(native.readCalls).toEqual([[1050, '0986', false]]);
 
     clock += 250;
     native.finishRead({ ok: true, card });
@@ -626,8 +633,11 @@ describe('eventos para a UI e para o integrador', () => {
 
   it('registerUiHost: desregistrar duas vezes não desconta outro Provider', async () => {
     __setDepsForTests({ native }, { requireUiHost: true });
-    const first = registerUiHost();
-    const second = registerUiHost();
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const first = registerUiHost(Symbol('a'));
+    const second = registerUiHost(Symbol('b'));
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
     first();
     first();
     const promise = capture({ amountCents: 100 });
@@ -649,7 +659,7 @@ describe('integração com a UI e diagnóstico', () => {
     await expect(capture({ amountCents: 100 })).rejects.toThrow(
       /CashTapProvider/
     );
-    const unregister = registerUiHost();
+    const unregister = registerUiHost(Symbol('host'));
     const promise = capture({ amountCents: 100 });
     await flush();
     cancel();
@@ -1052,5 +1062,148 @@ describe('ordem e descarte de eventos (D018)', () => {
       error: { code: 'UNKNOWN' },
     });
     error.mockRestore();
+  });
+});
+
+describe('progresso por etapa (D019)', () => {
+  const progress = () => getActiveSession()?.progress;
+
+  // Devolve a promise embrulhada: um async que retorna a promise esperaria o desfecho.
+  async function reading(params = { amountCents: 100 }) {
+    const promise = capture(params);
+    await flush();
+    native.tap();
+    await flush();
+    expect(getActiveSession()?.state).toBe('READING');
+    return { promise };
+  }
+
+  async function finish(promise: Promise<unknown>) {
+    cancel();
+    native.finishRead({ ok: false, code: 'CANCELLED_BY_USER', detail: '' });
+    await flush();
+    await promise;
+  }
+
+  it('SW diferente de 9000 não avança a barra', async () => {
+    const { promise } = await reading();
+    native.exchange('SELECT_PPSE', '6A82');
+    expect(progress()).toBe(0);
+    native.exchange('SELECT_AID');
+    expect(progress()).toBe(1);
+    await finish(promise);
+  });
+
+  it('etapa repetida (vários READ RECORD, PPSE de novo) conta uma vez', async () => {
+    const { promise } = await reading();
+    native.exchange('SELECT_PPSE');
+    native.exchange('SELECT_PPSE');
+    native.exchange('READ_RECORD');
+    native.exchange('READ_RECORD');
+    native.exchange('READ_RECORD');
+    expect(progress()).toBe(2);
+    await finish(promise);
+  });
+
+  it('cada etapa nova republica a projeção para a UI', async () => {
+    const { promise } = await reading();
+    const published = jest.fn();
+    const unsubscribe = subscribeActiveSession(published);
+    native.exchange('SELECT_PPSE');
+    native.exchange('SELECT_PPSE');
+    native.exchange('SELECT_AID', '6A82');
+    expect(published).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    await finish(promise);
+  });
+
+  it('zera na nova aproximação após falha recuperável', async () => {
+    const { promise } = await reading();
+    native.exchange('SELECT_PPSE');
+    native.exchange('SELECT_AID');
+    expect(progress()).toBe(2);
+    native.finishRead({ ok: false, code: 'CARD_REMOVED', detail: '' });
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.recovery);
+    expect(getActiveSession()?.state).toBe('WAITING_CARD');
+    native.tap();
+    await flush();
+    expect(getActiveSession()?.state).toBe('READING');
+    expect(progress()).toBe(0);
+    await finish(promise);
+  });
+
+  it('trocas fora de READING são ignoradas', async () => {
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    expect(getActiveSession()?.state).toBe('WAITING_CARD');
+    const published = jest.fn();
+    const unsubscribe = subscribeActiveSession(published);
+    native.exchange('SELECT_PPSE');
+    expect(progress()).toBe(0);
+    expect(published).not.toHaveBeenCalled();
+    unsubscribe();
+    cancel();
+    await flush();
+    await promise;
+    expect(() => native.exchange('SELECT_AID')).not.toThrow();
+    expect(native.diagnosticListeners.size).toBe(0);
+  });
+
+  it('sem diagnostics, trocas emitidas pelo nativo não entram no registro', async () => {
+    const { promise } = await reading();
+    native.exchange('SELECT_PPSE');
+    native.exchange('SELECT_AID');
+    native.finishRead({ ok: true, card });
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.success);
+    await promise;
+    expect(native.readCalls[0]?.[2]).toBe(false);
+    expect(getLastDiagnostics()).toBeNull();
+  });
+});
+
+describe('RN-01: verificação inicial do NFC na projeção', () => {
+  it('nfcChecked é falso só até a primeira saída de CHECKING', async () => {
+    native.startResult = { ok: false, code: 'NFC_DISABLED', detail: '' };
+    const start: { open?: () => void } = {};
+    native.startReaderMode.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          start.open = () => resolve(native.startResult);
+        })
+    );
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    expect(getActiveSession()).toMatchObject({
+      state: 'CHECKING',
+      nfcChecked: false,
+    });
+    start.open?.();
+    await flush();
+    expect(getActiveSession()).toMatchObject({
+      state: 'ERROR',
+      nfcChecked: true,
+    });
+    // Reverificação a pedido do operador: o modal já está aberto e continua aberto.
+    const recheck: { open?: () => void } = {};
+    native.startReaderMode.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          recheck.open = () => resolve({ ok: true });
+        })
+    );
+    dispatchFromUi({ type: 'RECHECK' });
+    await flush();
+    expect(getActiveSession()).toMatchObject({
+      state: 'CHECKING',
+      nfcChecked: true,
+    });
+    recheck.open?.();
+    await flush();
+    expect(getActiveSession()?.state).toBe('WAITING_CARD');
+    cancel();
+    await flush();
+    await promise;
   });
 });

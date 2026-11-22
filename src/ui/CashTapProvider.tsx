@@ -1,7 +1,16 @@
-import { useEffect, type ReactNode } from 'react';
-import { registerUiHost } from '../core/controller';
+import {
+  useLayoutEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
+import {
+  getPrimaryUiHost,
+  registerUiHost,
+  subscribeUiHosts,
+} from '../core/controller';
+import type { CashTapAppearance } from '../types';
 import { CashTapModal } from './CashTapModal';
-import type { CashTapAppearance } from './theme';
 
 export type CashTapProviderProps = {
   children?: ReactNode;
@@ -17,11 +26,19 @@ export function CashTapProvider({
   children,
   appearance,
 }: CashTapProviderProps) {
-  useEffect(() => registerUiHost(), []);
+  const [host] = useState(() => Symbol('CashTapProvider'));
+  // Layout effect: roda antes dos efeitos passivos dos filhos, então um filho pode
+  // chamar capture() no próprio useEffect de montagem.
+  useLayoutEffect(() => registerUiHost(host), [host]);
+  const primary = useSyncExternalStore(
+    subscribeUiHosts,
+    getPrimaryUiHost,
+    getPrimaryUiHost
+  );
   return (
     <>
       {children}
-      <CashTapModal appearance={appearance} />
+      {primary === host && <CashTapModal appearance={appearance} />}
     </>
   );
 }

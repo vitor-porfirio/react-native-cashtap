@@ -1,8 +1,42 @@
-import { useEffect, useRef, useState } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { AccessibilityInfo, Animated, Easing } from 'react-native';
+
+/**
+ * Easings como constantes de módulo: `Easing.out(...)` cria uma função nova a cada
+ * chamada e, nas dependências de `useLoop`, reiniciaria a animação a cada render.
+ */
+export const EASE_OUT_QUAD = Easing.out(Easing.quad);
+export const EASE_IN_OUT_CUBIC = Easing.inOut(Easing.cubic);
+const EASE_OUT_CUBIC = Easing.out(Easing.cubic);
+
+const ReduceMotionContext = createContext(false);
+
+/**
+ * Consulta "Remover animações" uma única vez, no host do modal (montado com o Provider,
+ * bem antes da primeira captura), e distribui a todas as views.
+ */
+export function ReduceMotionProvider({ children }: { children: ReactNode }) {
+  const reduce = useSystemReduceMotion();
+  return (
+    <ReduceMotionContext.Provider value={reduce}>
+      {children}
+    </ReduceMotionContext.Provider>
+  );
+}
 
 /** Respeita "Remover animações" do Android: loops viram estado estático. */
 export function useReduceMotion(): boolean {
+  return useContext(ReduceMotionContext);
+}
+
+function useSystemReduceMotion(): boolean {
   const [reduce, setReduce] = useState(false);
   useEffect(() => {
     let active = true;
@@ -82,7 +116,7 @@ export function useEntrance(
           toValue: 1,
           duration,
           delay,
-          easing: Easing.out(Easing.cubic),
+          easing: EASE_OUT_CUBIC,
           useNativeDriver: true,
         });
     animation.start();

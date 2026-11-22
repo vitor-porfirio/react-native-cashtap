@@ -110,6 +110,7 @@ export class CaptureSession {
   private readDurationMs: number | undefined;
   private outcomeAt: number | null = null;
   private readonly stepsDone = new Set<string>();
+  private nfcChecked = false;
 
   constructor(
     readonly captureId: string,
@@ -131,6 +132,11 @@ export class CaptureSession {
   /** Etapas do diálogo concluídas (SW 9000) na leitura atual, para a barra de progresso. */
   get progress(): number {
     return this.stepsDone.size;
+  }
+
+  /** A verificação inicial do NFC já terminou (a sessão saiu de CHECKING ao menos uma vez). */
+  get hasCheckedNfc(): boolean {
+    return this.nfcChecked;
   }
 
   start(): Promise<CaptureResult> {
@@ -233,6 +239,7 @@ export class CaptureSession {
 
   private trackTimes(state: CaptureState): void {
     const now = this.deps.clock.now();
+    if (state !== 'CHECKING' && state !== 'IDLE') this.nfcChecked = true;
     if (state === 'READING') {
       this.readStartedAt = now;
       this.stepsDone.clear();
@@ -321,9 +328,9 @@ export class CaptureSession {
           .readCard(
             this.params.amountCents,
             this.params.currencyCode.padStart(4, '0'),
-            // Sempre emite as trocas (já mascaradas): a UI usa para o progresso por etapa.
-            // O registro de diagnóstico continua condicionado a `diagnostics` (D019).
-            true
+            // O nativo sempre emite etapa e SW (progresso da UI); comando e resposta, só
+            // com diagnóstico ligado (minimização — D019).
+            this.params.diagnostics
           )
           .then(
             (outcome) => this.onRead(outcome),

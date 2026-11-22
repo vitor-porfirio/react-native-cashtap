@@ -1,6 +1,6 @@
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { Animated, StyleSheet, Text, View } from 'react-native';
 import { ContactlessIcon } from './icons';
-import { useLoop } from './motion';
+import { EASE_IN_OUT_CUBIC, EASE_OUT_QUAD, useLoop } from './motion';
 import type { CashTapTheme } from './theme';
 
 const PHONE_W = 132;
@@ -28,21 +28,21 @@ export function NfcStage({ theme, mode, reduceMotion }: Props) {
   const animate = !reduceMotion;
   const ringA = useLoop(period, {
     enabled: animate,
-    easing: Easing.out(Easing.quad),
+    easing: EASE_OUT_QUAD,
   });
   const ringB = useLoop(period, {
     delay: period / 3,
     enabled: animate,
-    easing: Easing.out(Easing.quad),
+    easing: EASE_OUT_QUAD,
   });
   const ringC = useLoop(period, {
     delay: (2 * period) / 3,
     enabled: animate && !reading,
-    easing: Easing.out(Easing.quad),
+    easing: EASE_OUT_QUAD,
   });
   const tap = useLoop(3200, {
     enabled: animate && !reading,
-    easing: Easing.inOut(Easing.cubic),
+    easing: EASE_IN_OUT_CUBIC,
   });
   const shimmer = useLoop(1300, { enabled: animate && reading });
 
