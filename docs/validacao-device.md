@@ -75,3 +75,23 @@ Execute junto com a F6/F7 (pela tela de cobrança do example). Deixe o `adb logc
 | 5.8 | Cobrar com o NFC desligado e tocar "Cancelar" na tela de NFC desligado | Resultado `NFC_DISABLED` no app; modal fecha | |
 
 Issues: #20 (5.1, 5.2, 5.4), #21 (5.3, 5.8) e RN-02/D018 (5.5–5.7).
+
+---
+
+## F6/F7 — Interface do SDK e app de exemplo (#24–#28)
+
+| # | Passo | Esperado | OK? |
+|---|---|---|---|
+| 6.1 | Abrir o app | Tela de cobrança escura com chip "NFC pronto" (ou desligado/sem NFC, conforme o aparelho) | |
+| 6.2 | Digitar 12890 no teclado, testar "00" e o apagar; segurar o apagar | R$ 128,90; "00" multiplica por 100; segurar zera | |
+| 6.3 | Tocar "Cobrar R$ 128,90" | Modal desliza de baixo; valor, "Leitura segura", celular com ondas e cartão animado | |
+| 6.4 | Aproximar o cartão | Vibração curta; "Lendo cartão… não afaste"; barra avança por PPSE → AID → GPO → READ | |
+| 6.5 | Concluir a leitura | Check verde com vibração dupla; cartão mascarado e validade; modal fecha sozinho em ~1,5 s | |
+| 6.6 | Tela de resultado | Cartão ilustrado com número mascarado, duração, tentativas; "JSON para o backend" abre e compartilha (sem PAN completo) | |
+| 6.7 | Cobrar com um cartão não aceito (crachá/transporte) | Tela de erro com código; no app, "Tentar novamente" cobra de novo o mesmo valor | |
+| 6.8 | Ligar "Remover animações" (Acessibilidade) e cobrar | Telas estáticas, sem loops | |
+| 6.9 | Abrir "Diagnóstico" após uma leitura | Criptograma retornado (sim/não), tempo total, barras por etapa, linha do tempo e log mascarado; "Exportar" compartilha o texto | |
+| 6.10 | Abrir "Ensaios", escolher sessão/bandeira e registrar 2 leituras | Contador x/30, estatísticas, lista; "Exportar CSV" gera colunas do Apêndice B | |
+| 6.11 | Tirar print das telas de 6.3–6.6 e 6.9 | Material da Figura 6 do TCC (nenhum número completo aparece) | |
+
+Issues: #24 (6.3), #25 (6.3–6.5, 6.7), #26 (temas: ver testes; visual em 6.3), #27 (6.1–6.7), #28 (6.9).

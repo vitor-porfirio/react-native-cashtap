@@ -335,6 +335,29 @@ stateDiagram-v2
 
 ---
 
+## D019 — Interface do SDK e app de exemplo a partir do design  (2026-11-21 · F6/F7 · #24–#28)
+
+**Contexto:** o design (Claude Design, "CashTap modal design system": telas A1–A17 do modal, B1–B13 do app, `cashtap-tokens.json`) define o fluxo visual: folha de vidro violeta sobre o app, palco de aproximação animado, barra de progresso por etapa, hápticos e três temas (padrão, claro, "Feira Verde"). Partes dele conflitam com regras do projeto.
+
+**Decisão:**
+- **`<CashTapProvider>`** hospeda o modal; `capture()` sem ele rejeita (D018). O integrador escreve o Provider e uma chamada — o app de exemplo inteiro usa 3 linhas de SDK (teste E7-H2 automatizado).
+- **Zero dependência nativa na UI:** sem BlurView, gradiente nem SVG. Vidro vira superfície translúcida (folha quase opaca, para manter contraste sem blur), gradientes viram cor sólida e ícones são desenhados com `View`. Animações com `Animated` (driver nativo); com "Remover animações" ligado, loops viram estado estático.
+- **Tema:** `CashTapAppearance` com `mode` (`dark`/`light`), cores, fonte, raio e textos — por Provider e por captura. Se o integrador troca só a cor base (`primary`, `success`, `error`), as variações (`primaryStrong`, `primarySoft`, tons suaves) são derivadas, como o `derived` dos tokens. A fonte padrão é a do sistema: Sora/JetBrains Mono não são embutidas no pacote (o integrador pode passar `fontFamily`).
+- **Progresso por etapa:** a leitura sempre emite as trocas já mascaradas (`readCard(..., true)`); o runner conta as etapas com SW 9000 e a UI mostra PPSE/AID/GPO/READ. O registro de diagnóstico continua condicionado a `diagnostics: true`.
+- **Hápticos** do design via `Vibration` (permissão `VIBRATE`, normal, volta ao manifesto da lib): detecção 15 ms, falha recuperável 30 ms, sucesso `[0,40,60,40]`, erro/tempo esgotado `[0,80,40,80]`.
+- **Painel de diagnóstico** (`<CashTapDiagnostics>`) fica no SDK, não no app: assim o example mostra comandos e etapas sem conter nenhum termo do protocolo (E7-H2).
+
+**Divergências em relação ao design (intencionais):**
+- *JSON para o backend* sem criptograma, tipo de criptograma e ATC (RN-27): o app recebe só `cryptogramPresent`. O PAN aparece mascarado na tela (LGPD, TCC §2.3.3).
+- *Códigos de erro* do catálogo da especificação (`UNSUPPORTED_BRAND`, `TIMEOUT`, ...) em vez de `E_CARD_NOT_SUPPORTED`, `E_TIMEOUT`, ...
+- *Tempo esgotado e erro no modal* têm só "Fechar": são estados terminais (especificação §4); "Tentar novamente" fica na tela de resultado do app (B4–B6), que inicia nova cobrança do mesmo valor.
+- *Aparelho sem NFC (A11)* não abre o modal (RN-01); o app mostra o erro.
+- *Copiar JSON* virou "Compartilhar": o core do RN não tem mais Clipboard e o SDK não adiciona dependência.
+
+**Consequências:** visual fiel ao design sem custo de instalação para o integrador; quem quiser blur ou a fonte do design pode adicioná-los no próprio app.
+
+---
+
 # Divergências spec EMV × cartão real
 
 | Data | Cartão | Esperado pela spec | Observado | Hex |
