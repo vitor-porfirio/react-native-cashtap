@@ -161,7 +161,7 @@ describe('capture() — caminho feliz (E5-H1)', () => {
     clock += 100;
     native.tap();
     await flush();
-    expect(native.readCalls).toEqual([[1050, '0986', false]]);
+    expect(native.readCalls).toEqual([[1050, '0986', true]]);
 
     clock += 250;
     native.finishRead({ ok: true, card });

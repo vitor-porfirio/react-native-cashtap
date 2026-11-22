@@ -1,5 +1,6 @@
 import { createError, type CashTapError } from '../errors';
 import type { CaptureParams } from '../types';
+import type { CashTapAppearance } from '../ui/theme';
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const MIN_TIMEOUT_MS = 10_000;
@@ -19,6 +20,7 @@ export type ResolvedParams = {
   timeoutMs: number;
   maxRetries: number;
   diagnostics: boolean;
+  appearance?: CashTapAppearance;
 };
 
 /** `reference` só é aceito como string; qualquer outra coisa é descartada. */
@@ -85,6 +87,7 @@ export function resolveParams(
       timeoutMs,
       maxRetries,
       diagnostics: params.diagnostics === true,
+      ...(params.appearance !== undefined && { appearance: params.appearance }),
     },
   };
 }

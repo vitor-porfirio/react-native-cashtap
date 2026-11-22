@@ -1,5 +1,6 @@
 import type { CaptureState } from './core/machine';
 import type { CashTapError } from './errors';
+import type { CashTapAppearance } from './ui/theme';
 
 export const NFC_STATUSES = ['UNSUPPORTED', 'DISABLED', 'READY'] as const;
 
@@ -38,6 +39,8 @@ export type CaptureParams = {
   maxRetries?: number;
   /** Registra transições, tempos e comandos (mascarados) para o painel de diagnóstico (E7-H3). */
   diagnostics?: boolean;
+  /** Aparência só desta captura; sobrepõe a do `CashTapProvider` (E6-H3). */
+  appearance?: CashTapAppearance;
 };
 
 /** Dados do cartão, já normalizados. */

@@ -36,7 +36,13 @@ import {
 export type ActiveSession = {
   captureId: string;
   state: CaptureState;
-  params: Pick<ResolvedParams, 'amountCents' | 'currencyCode' | 'maxRetries'>;
+  params: Pick<
+    ResolvedParams,
+    'amountCents' | 'currencyCode' | 'maxRetries' | 'timeoutMs'
+  > &
+    Pick<Partial<ResolvedParams>, 'appearance'>;
+  /** Etapas do diálogo com o cartão concluídas na leitura atual (0 a 4). */
+  progress: number;
   attempts: number;
   failures: number;
   cancelRequested: boolean;
@@ -99,13 +105,21 @@ function errorOf(snapshot: MachineSnapshot): CashTapError | undefined {
 
 function project(session: CaptureSession): ActiveSession {
   const snapshot = session.current;
-  const { amountCents, currencyCode, maxRetries } = session.settings;
+  const { amountCents, currencyCode, maxRetries, timeoutMs, appearance } =
+    session.settings;
   const error = errorOf(snapshot);
   const card = 'card' in snapshot ? snapshot.card : undefined;
   return {
     captureId: session.captureId,
     state: snapshot.state,
-    params: { amountCents, currencyCode, maxRetries },
+    params: {
+      amountCents,
+      currencyCode,
+      maxRetries,
+      timeoutMs,
+      ...(appearance !== undefined && { appearance }),
+    },
+    progress: session.progress,
     attempts: snapshot.context.attempts,
     failures: snapshot.context.failures,
     cancelRequested: snapshot.context.cancelRequested,
