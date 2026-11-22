@@ -12,6 +12,7 @@ const meta: CaptureMeta = {
   startedAt: 0,
   durationMs: 2345.678,
   attempts: 1,
+  detectionMs: 1801.26,
   readDurationMs: 412.34,
   stepTimings: [
     { step: 'SELECT_PPSE', durationMs: 20.04 },
@@ -42,6 +43,7 @@ describe('medições (E8-H2, Apêndice B)', () => {
       errorCode: '',
       brand: 'visa',
       attempts: 1,
+      detectionMs: 1801.3,
       readMs: 412.3,
       totalMs: 2345.7,
       ppseMs: 20,
@@ -63,6 +65,7 @@ describe('medições (E8-H2, Apêndice B)', () => {
     ...meta,
     stepTimings: [],
     readDurationMs: undefined,
+    detectionMs: undefined,
   };
   const failures: Array<[CaptureResult, string, string]> = [
     [
@@ -87,6 +90,7 @@ describe('medições (E8-H2, Apêndice B)', () => {
       outcome,
       errorCode,
       brand: '',
+      detectionMs: null,
       readMs: null,
       ppseMs: null,
     });
@@ -103,7 +107,12 @@ describe('medições (E8-H2, Apêndice B)', () => {
     const error: CaptureResult = {
       status: 'error',
       error: createError('UNSUPPORTED_BRAND'),
-      meta: { ...meta, stepTimings: [], readDurationMs: undefined },
+      meta: {
+        ...meta,
+        stepTimings: [],
+        readDurationMs: undefined,
+        detectionMs: undefined,
+      },
     };
     const csv = measurementsToCsv(
       [
@@ -114,11 +123,13 @@ describe('medições (E8-H2, Apêndice B)', () => {
     );
     const [header, first, second] = csv.split('\n');
     expect(header).toBe(
-      'sessao,captura,desfecho,categoria,bandeira,tentativas,t_ciclo,t_total,t_ppse,t_aid,t_gpo,t_read'
+      'sessao,captura,desfecho,categoria,bandeira,tentativas,t_deteccao,t_ciclo,t_total,t_ppse,t_aid,t_gpo,t_read'
     );
-    expect(MEASUREMENT_COLUMNS).toHaveLength(11);
-    expect(first).toBe('1,ct_1,sucesso,,visa,1,412.3,2345.7,20,15,90.1,35');
-    expect(second).toBe('2,ct_1,falha,UNSUPPORTED_BRAND,,1,,2345.7,,,,');
+    expect(MEASUREMENT_COLUMNS).toHaveLength(12);
+    expect(first).toBe(
+      '1,ct_1,sucesso,,visa,1,1801.3,412.3,2345.7,20,15,90.1,35'
+    );
+    expect(second).toBe('2,ct_1,falha,UNSUPPORTED_BRAND,,1,,,2345.7,,,,');
   });
 
   it('desfechos saem no vocabulário do Apêndice B no CSV', () => {

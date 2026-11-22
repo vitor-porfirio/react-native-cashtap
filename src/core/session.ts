@@ -108,6 +108,11 @@ export class CaptureSession {
   private startedAtEpoch = 0;
   private readStartedAt: number | null = null;
   private readDurationMs: number | undefined;
+  private detectionMs: number | undefined;
+  /** Instante da tag mais recente: é ela que o nativo lê (D017, tag pendente). */
+  private lastTagAt: number | null = null;
+  /** Instante de detecção da tag usada pela leitura em curso. */
+  private readTagAt: number | null = null;
   private outcomeAt: number | null = null;
   private readonly stepsDone = new Set<string>();
   private nfcChecked = false;
@@ -147,9 +152,10 @@ export class CaptureSession {
     this.startedAtEpoch = this.deps.clock.epochMs();
     try {
       this.subscriptions.push(
-        this.deps.native.onTagDetected(() =>
-          this.dispatch({ type: 'TAG_DETECTED' })
-        )
+        this.deps.native.onTagDetected(() => {
+          this.lastTagAt = this.deps.clock.now();
+          this.dispatch({ type: 'TAG_DETECTED' });
+        })
       );
       this.subscriptions.push(
         this.deps.native.onDiagnostic((exchange) => this.onProgress(exchange))
@@ -242,6 +248,7 @@ export class CaptureSession {
     if (state !== 'CHECKING' && state !== 'IDLE') this.nfcChecked = true;
     if (state === 'READING') {
       this.readStartedAt = now;
+      this.readTagAt = this.lastTagAt ?? now;
       this.stepsDone.clear();
     }
     // Duração da captura vai até o desfecho, sem o tempo de exibição da tela final.
@@ -364,6 +371,8 @@ export class CaptureSession {
     if (outcome.ok) {
       if (this.readStartedAt !== null) {
         this.readDurationMs = this.deps.clock.now() - this.readStartedAt;
+        this.detectionMs =
+          (this.readTagAt ?? this.readStartedAt) - this.startedAtMono;
       }
       this.dispatch({ type: 'READ_SUCCEEDED', card: outcome.card });
     } else {
@@ -414,6 +423,7 @@ export class CaptureSession {
           }))
         : [],
       ...(card && {
+        detectionMs: this.detectionMs,
         readDurationMs: this.readDurationMs,
         cryptogramPresent: card.cryptogramPresent,
       }),

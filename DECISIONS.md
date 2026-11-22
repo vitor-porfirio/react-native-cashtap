@@ -386,6 +386,46 @@ stateDiagram-v2
 
 ---
 
+## D021 — Medição, CI e protocolo dos ensaios  (2026-11-22 · F8 · #29–#32)
+
+**Contexto:** a F8 fecha a validação: núcleo testado no CI (#29), documentação de integração (#30), tempos por etapa exportáveis (#31) e o ensaio de 60 leituras com dados brutos versionados (#32). A #31 pede o tempo de **detecção**, que ainda não existia, e o testing.md exige ≥ 90% de linhas em `emv/`, que não era medido.
+
+**Decisão:**
+- `CaptureMeta.detectionMs` (opcional, só em sucesso): do `capture()` ao instante em que o runner recebeu o `onTagDetected` da aproximação cuja leitura deu certo. Com tag pendente (D017) é a tag relida, não a primeira; com o cartão aproximado durante a verificação, é o instante da aproximação, não o do NFC pronto. Mesmo relógio monotônico de `durationMs` e `readDurationMs` (D018). Exportado como `t_deteccao`.
+- CI: job `test-android` roda `testDebugUnitTest` e `verifyEmvCoverage` (JDK 17, JVM, sem device), com cache Gradle de prefixo próprio, para não ocupar a chave do `build-android`, e relatório publicado quando falha. `verifyEmvCoverage` só é registrada com `-PcashtapCoverage` (a cobertura fica desligada no build de quem instala o pacote), lê o relatório JaCoCo do AGP (`enableUnitTestCoverage`, sem dependência nova) e falha se `com.cashtap.emv` tiver menos de 90% de linhas cobertas (hoje: 98,5%).
+- Protocolo dos ensaios em `docs/ensaios/protocolo.md`, escrito antes da coleta:
+  - 3 sessões × (10 Visa + 10 Mastercard) **válidas**, com a ordem das bandeiras alternada entre sessões.
+  - Posição da antena marcada fisicamente.
+  - Classificação de desfecho, métricas e ameaças à validade.
+  - **Expirado com o cartão posicionado é falha de detecção** e entra no denominador. Só sai dele, como as canceladas, se constar em `dados/descartes.csv` com o erro de procedimento anotado, e a tentativa é refeita. O script não deduz descartes pelo desfecho.
+  - As hipóteses são avaliadas de forma descritiva, com IC 95% de Wilson.
+- `scripts/ensaios-resumo.mjs` (Node puro):
+  - gera as tabelas a partir dos CSVs versionados;
+  - deduplica por `captura` e aborta se a mesma captura aparecer com dados diferentes;
+  - valida o cabeçalho;
+  - calcula o overhead fora do diálogo (`t_ciclo` − Σ etapas).
+
+  Coberto por Jest com CSVs no formato real.
+- A tela de ensaios exporta só a sessão selecionada (um arquivo por sessão).
+- `peerDependencies` declara só o que foi testado: `react-native >= 0.88.0`, `react >= 19`.
+- A documentação da API fica no README (referência para quem integra) e no Apêndice A (texto do TCC, com as assinaturas copiadas de `src/index.ts` e `src/dev.ts`); não há `docs/api.md`, para não manter uma terceira cópia.
+
+**Alternativas:**
+- *Detecção pelo `detectedAt` do evento nativo* — descartada para esta métrica: `elapsedRealtime` (nativo) e o relógio do runner (JS) não são comparáveis em valor absoluto, e a métrica precisa ser subtraída do início da captura, medido no JS. Um delta inteiramente nativo (`detectedAt` → início do `readCard`) mediria a latência da ponte; fica como trabalho futuro, porque o overhead calculado pelo script já cobre o custo fora do diálogo.
+- *Taxa de sucesso excluindo expiradas* — descartada (versão inicial deste protocolo, revista antes da coleta): inflaria a métrica principal, porque expiração com o cartão posicionado é exatamente a falha de detecção que o ensaio quer medir.
+- *Planilha manual* — descartada: a linha sai pronta do SDK; o script evita erro de transcrição e torna o resultado reproduzível.
+
+**Consequências:** o ensaio começa sem mudança de código; qualquer pessoa reproduz as tabelas a partir dos CSVs do repositório; uma regressão de cobertura no núcleo EMV quebra o CI.
+
+**Evidência:**
+- `src/core/__tests__/controller.test.ts`: detecção no caminho feliz, na retentativa, na tag pendente e durante a verificação; ausente em falha de leitura.
+- `src/core/__tests__/measurements.test.ts`: coluna `t_deteccao`.
+- `src/__tests__/ensaios-resumo.test.ts`: denominador, descartes, deduplicação, conflito, cabeçalho, Wilson, overhead.
+- `.github/workflows/ci.yml`: job `test-android`.
+- `android/build.gradle`: tarefa `verifyEmvCoverage`.
+
+---
+
 # Divergências spec EMV × cartão real
 
 | Data | Cartão | Esperado pela spec | Observado | Hex |
