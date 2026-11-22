@@ -129,9 +129,11 @@ export function CashTapDiagnostics({
   }
 
   const maxStep = Math.max(1, ...report.stepTimings.map((s) => s.durationMs));
-  const total =
-    report.readDurationMs ??
-    report.stepTimings.reduce((sum, s) => sum + s.durationMs, 0);
+  // t_total e t_ciclo são métricas distintas (D018): o rótulo diz qual é qual.
+  const total = report.durationMs;
+  const read = report.readDurationMs;
+  const ms = (value: number) =>
+    `${Math.round(value).toLocaleString('pt-BR')} ms`;
   const cryptogram = report.cryptogramPresent;
 
   return (
@@ -174,10 +176,15 @@ export function CashTapDiagnostics({
         <View style={[styles.card, styles.col]}>
           <Text style={styles.cardLabel}>Tempo total</Text>
           <Text style={styles.bigValue} testID="cashtap-diagnostics-outcome">
-            {report.outcome === 'success'
-              ? `${Math.round(total).toLocaleString('pt-BR')} ms`
+            {report.outcome === 'success' && total !== undefined
+              ? ms(total)
               : (report.errorCode ?? report.outcome ?? '…')}
           </Text>
+          {read !== undefined && (
+            <Text style={styles.cardLabel} testID="cashtap-diagnostics-read">
+              {`Leitura do cartão: ${ms(read)}`}
+            </Text>
+          )}
         </View>
       </View>
 

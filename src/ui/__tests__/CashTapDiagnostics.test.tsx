@@ -70,7 +70,11 @@ describe('CashTapDiagnostics (E7-H3)', () => {
     });
     expect(screen.getByTestId('cashtap-diagnostics')).toBeTruthy();
     expect(screen.getByText('✓ Sim')).toBeTruthy();
-    expect(screen.getByText('420 ms')).toBeTruthy();
+    // t_total e t_ciclo rotulados separadamente (D018)
+    expect(
+      screen.getByTestId('cashtap-diagnostics-outcome').props.children
+    ).toBe('500 ms');
+    expect(screen.getByText('Leitura do cartão: 420 ms')).toBeTruthy();
     expect(screen.getByText('GPO')).toBeTruthy();
     expect(screen.getByText('Lendo')).toBeTruthy();
     expect(screen.getAllByTestId('cashtap-diagnostics-exchange')).toHaveLength(

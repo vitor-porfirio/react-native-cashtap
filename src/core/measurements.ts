@@ -2,55 +2,71 @@ import type { ErrorCode } from '../errors';
 import type { CaptureResult, CardBrand } from '../types';
 
 /**
- * Linha de medição de uma captura, no formato do Apêndice B do TCC
- * (E8-H2: tempos por etapa exportáveis em formato tabular).
+ * Desfecho de uma captura para os ensaios: `success` na 1ª leitura, `recovered` após
+ * retentativa automática, ou falha.
  */
 export type MeasurementOutcome =
-  'sucesso' | 'recuperado' | 'falha' | 'cancelado' | 'expirado';
+  'success' | 'recovered' | 'failure' | 'cancelled' | 'timeout';
 
+/** Linha de medição de uma captura (E8-H2). Tempos em ms, com uma casa decimal. */
 export type MeasurementRow = {
   captureId: string;
   outcome: MeasurementOutcome;
   /** Código do erro do catálogo, ou vazio. */
-  category: ErrorCode | '';
+  errorCode: ErrorCode | '';
   brand: CardBrand | '';
   attempts: number;
-  t_ciclo: number | null;
-  t_total: number;
-  t_ppse: number | null;
-  t_aid: number | null;
-  t_gpo: number | null;
-  t_read: number | null;
+  /** Da detecção do cartão ao resultado da leitura (t_ciclo). */
+  readMs: number | null;
+  /** Do `capture()` ao desfecho (t_total). */
+  totalMs: number;
+  ppseMs: number | null;
+  aidMs: number | null;
+  gpoMs: number | null;
+  readRecordMs: number | null;
 };
 
-export const MEASUREMENT_COLUMNS: Array<keyof MeasurementRow> = [
-  'captureId',
-  'outcome',
-  'category',
-  'brand',
-  'attempts',
-  't_ciclo',
-  't_total',
-  't_ppse',
-  't_aid',
-  't_gpo',
-  't_read',
-];
+/**
+ * Colunas do CSV, com os rótulos do formulário de ensaios (Apêndice B do TCC).
+ * Os identificadores da API ficam em inglês (D006); só o arquivo exportado usa o vocabulário do TCC.
+ */
+export const MEASUREMENT_COLUMNS: ReadonlyArray<
+  readonly [keyof MeasurementRow, string]
+> = Object.freeze([
+  ['captureId', 'captura'],
+  ['outcome', 'desfecho'],
+  ['errorCode', 'categoria'],
+  ['brand', 'bandeira'],
+  ['attempts', 'tentativas'],
+  ['readMs', 't_ciclo'],
+  ['totalMs', 't_total'],
+  ['ppseMs', 't_ppse'],
+  ['aidMs', 't_aid'],
+  ['gpoMs', 't_gpo'],
+  ['readRecordMs', 't_read'],
+] as const);
+
+const OUTCOME_CSV: Record<MeasurementOutcome, string> = {
+  success: 'sucesso',
+  recovered: 'recuperado',
+  failure: 'falha',
+  cancelled: 'cancelado',
+  timeout: 'expirado',
+};
 
 const round = (value: number | undefined): number | null =>
   value === undefined ? null : Math.round(value * 10) / 10;
 
-/** Desfecho no vocabulário do TCC: sucesso na 1ª leitura, recuperado após retentativa, ou falha. */
-function outcomeLabel(result: CaptureResult): MeasurementOutcome {
+function outcomeOf(result: CaptureResult): MeasurementOutcome {
   switch (result.status) {
     case 'success':
-      return result.meta.attempts > 1 ? 'recuperado' : 'sucesso';
+      return result.meta.attempts > 1 ? 'recovered' : 'success';
     case 'cancelled':
-      return 'cancelado';
+      return 'cancelled';
     case 'timeout':
-      return 'expirado';
+      return 'timeout';
     case 'error':
-      return 'falha';
+      return 'failure';
   }
 }
 
@@ -59,16 +75,16 @@ export function toMeasurementRow(result: CaptureResult): MeasurementRow {
     round(result.meta.stepTimings.find((s) => s.step === name)?.durationMs);
   return {
     captureId: result.meta.captureId,
-    outcome: outcomeLabel(result),
-    category: 'error' in result ? result.error.code : '',
+    outcome: outcomeOf(result),
+    errorCode: 'error' in result ? result.error.code : '',
     brand: result.status === 'success' ? result.card.brand : '',
     attempts: result.meta.attempts,
-    t_ciclo: round(result.meta.readDurationMs),
-    t_total: Math.round(result.meta.durationMs * 10) / 10,
-    t_ppse: step('SELECT_PPSE'),
-    t_aid: step('SELECT_AID'),
-    t_gpo: step('GET_PROCESSING_OPTIONS'),
-    t_read: step('READ_RECORD'),
+    readMs: round(result.meta.readDurationMs),
+    totalMs: Math.round(result.meta.durationMs * 10) / 10,
+    ppseMs: step('SELECT_PPSE'),
+    aidMs: step('SELECT_AID'),
+    gpoMs: step('GET_PROCESSING_OPTIONS'),
+    readRecordMs: step('READ_RECORD'),
   };
 }
 
@@ -79,17 +95,26 @@ function csvCell(value: unknown): string {
 }
 
 /**
- * CSV com cabeçalho. `extra` acrescenta colunas do app (ex.: sessão do ensaio)
- * à esquerda. Nenhuma coluna contém PAN.
+ * CSV com cabeçalho no formato do Apêndice B. `extraColumns` acrescenta colunas do app
+ * (ex.: sessão do ensaio) à esquerda, com o próprio nome como cabeçalho. Nenhuma coluna contém PAN.
  */
 export function measurementsToCsv(
-  rows: Array<MeasurementRow & Record<string, unknown>>,
-  extraColumns: string[] = []
+  rows: ReadonlyArray<MeasurementRow & Record<string, unknown>>,
+  extraColumns: readonly string[] = []
 ): string {
-  const columns = [...extraColumns, ...MEASUREMENT_COLUMNS];
-  const lines = [columns.join(',')];
+  const header = [
+    ...extraColumns,
+    ...MEASUREMENT_COLUMNS.map(([, label]) => label),
+  ];
+  const lines = [header.join(',')];
   for (const row of rows) {
-    lines.push(columns.map((column) => csvCell(row[column])).join(','));
+    const cells = [
+      ...extraColumns.map((column) => csvCell(row[column])),
+      ...MEASUREMENT_COLUMNS.map(([key]) =>
+        csvCell(key === 'outcome' ? OUTCOME_CSV[row.outcome] : row[key])
+      ),
+    ];
+    lines.push(cells.join(','));
   }
   return lines.join('\n');
 }

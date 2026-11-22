@@ -10,6 +10,11 @@
       "types": "./lib/typescript/src/index.d.ts",
       "default": "./lib/module/index.js"
     },
+    "./dev": {
+      "react-native-cashtap-source": "./src/dev.ts",
+      "types": "./lib/typescript/src/dev.d.ts",
+      "default": "./lib/module/dev.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -140,11 +145,16 @@
       "<rootDir>/example/node_modules",
       "<rootDir>/lib/"
     ],
+    "moduleNameMapper": {
+      "^react$": "<rootDir>/node_modules/react",
+      "^react/(.*)$": "<rootDir>/node_modules/react/$1"
+    },
     "collectCoverageFrom": [
       "src/**/*.{ts,tsx}",
       "!src/**/__tests__/**",
       "!src/NativeCashtap.ts",
-      "!src/index.ts"
+      "!src/index.ts",
+      "!src/dev.ts"
     ],
     "coverageThreshold": {
       "global": {

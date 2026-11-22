@@ -1,6 +1,5 @@
 import { createError, type CashTapError } from '../errors';
-import type { CaptureParams } from '../types';
-import type { CashTapAppearance } from '../ui/theme';
+import type { CaptureParams, CashTapAppearance } from '../types';
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const MIN_TIMEOUT_MS = 10_000;

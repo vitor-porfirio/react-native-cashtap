@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import { ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { capture } from 'react-native-cashtap';
 import {
-  capture,
   measurementsToCsv,
   toMeasurementRow,
   type MeasurementRow,
-} from 'react-native-cashtap';
+} from 'react-native-cashtap/dev';
 import {
   AppBar,
   Glass,
@@ -21,7 +21,11 @@ import { c, mono } from '../theme';
  * 3 sessões, 30 leituras por bandeira. A linha de medição vem pronta do SDK.
  */
 type Brand = 'visa' | 'mastercard';
-type Trial = MeasurementRow & { n: number; sessao: number; cartao: Brand };
+export type Trial = MeasurementRow & {
+  n: number;
+  sessao: number;
+  cartao: Brand;
+};
 
 const PER_BRAND = 30;
 const TRIAL_AMOUNT_CENTS = 100;
@@ -30,18 +34,25 @@ const OUTCOME_LOOK: Record<
   MeasurementRow['outcome'],
   { label: string; color: string; soft: string }
 > = {
-  sucesso: { label: 'Sucesso', color: c.success, soft: c.successSoft },
-  recuperado: { label: 'Recuperado', color: c.warning, soft: c.warningSoft },
-  falha: { label: 'Falha', color: c.error, soft: c.errorSoft },
-  expirado: { label: 'Expirado', color: c.error, soft: c.errorSoft },
-  cancelado: { label: 'Cancelado', color: c.muted, soft: c.neutralSoft },
+  success: { label: 'Sucesso', color: c.success, soft: c.successSoft },
+  recovered: { label: 'Recuperado', color: c.warning, soft: c.warningSoft },
+  failure: { label: 'Falha', color: c.error, soft: c.errorSoft },
+  timeout: { label: 'Expirado', color: c.error, soft: c.errorSoft },
+  cancelled: { label: 'Cancelado', color: c.muted, soft: c.neutralSoft },
 };
 
-export function TrialsScreen({ onBack }: { onBack: () => void }) {
+/** Os ensaios vivem no App: sair desta tela não perde as leituras já registradas. */
+type Props = {
+  onBack: () => void;
+  trials: Trial[];
+  setTrials: (update: (list: Trial[]) => Trial[]) => void;
+};
+
+export function TrialsScreen({ onBack, trials, setTrials }: Props) {
   const [session, setSession] = useState(1);
   const [brand, setBrand] = useState<Brand>('visa');
-  const [trials, setTrials] = useState<Trial[]>([]);
   const [running, setRunning] = useState(false);
+  const [integrationError, setIntegrationError] = useState<string | null>(null);
   const [exported, setExported] = useState(false);
 
   const current = useMemo(
@@ -49,31 +60,40 @@ export function TrialsScreen({ onBack }: { onBack: () => void }) {
     [trials, session, brand]
   );
   const stats = {
-    sucesso: current.filter((t) => t.outcome === 'sucesso').length,
-    recuperado: current.filter((t) => t.outcome === 'recuperado').length,
-    falha: current.filter(
-      (t) => t.outcome !== 'sucesso' && t.outcome !== 'recuperado'
+    success: current.filter((t) => t.outcome === 'success').length,
+    recovered: current.filter((t) => t.outcome === 'recovered').length,
+    failure: current.filter(
+      (t) => t.outcome !== 'success' && t.outcome !== 'recovered'
     ).length,
   };
 
   const run = async () => {
     setRunning(true);
-    const result = await capture({
-      amountCents: TRIAL_AMOUNT_CENTS,
-      reference: `ensaio-s${session}-${brand}-${current.length + 1}`,
-      diagnostics: true,
-    });
-    setRunning(false);
-    setExported(false);
-    setTrials((list) => [
-      ...list,
-      {
-        ...toMeasurementRow(result),
-        n: list.length + 1,
-        sessao: session,
-        cartao: brand,
-      },
-    ]);
+    setIntegrationError(null);
+    try {
+      const result = await capture({
+        amountCents: TRIAL_AMOUNT_CENTS,
+        reference: `ensaio-s${session}-${brand}-${current.length + 1}`,
+        diagnostics: true,
+      });
+      setExported(false);
+      setTrials((list) => [
+        ...list,
+        {
+          ...toMeasurementRow(result),
+          n: list.length + 1,
+          sessao: session,
+          cartao: brand,
+        },
+      ]);
+    } catch (error) {
+      // capture() só rejeita por erro de integração; nenhuma leitura é registrada.
+      setIntegrationError(
+        error instanceof Error ? error.message : String(error)
+      );
+    } finally {
+      setRunning(false);
+    }
   };
 
   const exportCsv = async () => {
@@ -134,19 +154,19 @@ export function TrialsScreen({ onBack }: { onBack: () => void }) {
           </View>
           <View style={styles.stats}>
             <Stat
-              n={stats.sucesso}
+              n={stats.success}
               label="Sucesso"
               color={c.success}
               soft={c.successSoft}
             />
             <Stat
-              n={stats.recuperado}
+              n={stats.recovered}
               label="Recuperado"
               color={c.warning}
               soft={c.warningSoft}
             />
             <Stat
-              n={stats.falha}
+              n={stats.failure}
               label="Falha"
               color={c.error}
               soft={c.errorSoft}
@@ -154,6 +174,9 @@ export function TrialsScreen({ onBack }: { onBack: () => void }) {
           </View>
         </Glass>
 
+        {integrationError && (
+          <Text style={styles.integrationError}>{integrationError}</Text>
+        )}
         <Text style={styles.sectionTitle}>Tentativas</Text>
         {current.length === 0 ? (
           <View style={styles.empty}>
@@ -180,11 +203,11 @@ export function TrialsScreen({ onBack }: { onBack: () => void }) {
                     {look.label}
                   </Text>
                   <Text style={styles.trialCode} numberOfLines={1}>
-                    {t.category ||
+                    {t.errorCode ||
                       (t.attempts > 1 ? `RETRY×${t.attempts - 1}` : '')}
                   </Text>
                   <Text style={styles.trialTime}>
-                    {formatSeconds(t.t_total)}
+                    {formatSeconds(t.totalMs)}
                   </Text>
                 </View>
               );
@@ -234,6 +257,7 @@ function Stat({
 }
 
 const styles = StyleSheet.create({
+  integrationError: { color: c.error, fontSize: 13, textAlign: 'center' },
   flex: { flex: 1 },
   content: { paddingHorizontal: 20, paddingTop: 4, paddingBottom: 16, gap: 14 },
   group: { gap: 6 },

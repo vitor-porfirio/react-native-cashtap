@@ -1,5 +1,5 @@
 import { StyleSheet, View } from 'react-native';
-import { CashTapDiagnostics } from 'react-native-cashtap';
+import { CashTapDiagnostics } from 'react-native-cashtap/dev';
 import { AppBar } from '../components/ui';
 
 /**

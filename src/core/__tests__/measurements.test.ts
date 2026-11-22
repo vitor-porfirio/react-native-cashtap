@@ -38,25 +38,25 @@ describe('medições (E8-H2, Apêndice B)', () => {
   it('sucesso na 1ª leitura: tempos por etapa arredondados a 0,1 ms', () => {
     expect(toMeasurementRow(success)).toEqual({
       captureId: 'ct_1',
-      outcome: 'sucesso',
-      category: '',
+      outcome: 'success',
+      errorCode: '',
       brand: 'visa',
       attempts: 1,
-      t_ciclo: 412.3,
-      t_total: 2345.7,
-      t_ppse: 20,
-      t_aid: 15,
-      t_gpo: 90.1,
-      t_read: 35,
+      readMs: 412.3,
+      totalMs: 2345.7,
+      ppseMs: 20,
+      aidMs: 15,
+      gpoMs: 90.1,
+      readRecordMs: 35,
     });
   });
 
-  it('sucesso após retentativa automática é "recuperado"', () => {
+  it('sucesso após retentativa automática é "recovered"', () => {
     const row = toMeasurementRow({
       ...success,
       meta: { ...meta, attempts: 2 },
     });
-    expect(row.outcome).toBe('recuperado');
+    expect(row.outcome).toBe('recovered');
   });
 
   const bare: CaptureMeta = {
@@ -71,24 +71,24 @@ describe('medições (E8-H2, Apêndice B)', () => {
         error: createError('READ_FAILED_MAX_RETRIES'),
         meta: bare,
       },
-      'falha',
+      'failure',
       'READ_FAILED_MAX_RETRIES',
     ],
     [
       { status: 'timeout', error: createError('TIMEOUT'), meta: bare },
-      'expirado',
+      'timeout',
       'TIMEOUT',
     ],
-    [{ status: 'cancelled', meta: bare }, 'cancelado', ''],
+    [{ status: 'cancelled', meta: bare }, 'cancelled', ''],
   ];
 
-  it.each(failures)('desfecho %#: vira %s', (result, outcome, category) => {
+  it.each(failures)('desfecho %#: vira %s', (result, outcome, errorCode) => {
     expect(toMeasurementRow(result)).toMatchObject({
       outcome,
-      category,
+      errorCode,
       brand: '',
-      t_ciclo: null,
-      t_ppse: null,
+      readMs: null,
+      ppseMs: null,
     });
   });
 
@@ -113,9 +113,26 @@ describe('medições (E8-H2, Apêndice B)', () => {
       ['sessao']
     );
     const [header, first, second] = csv.split('\n');
-    expect(header).toBe(['sessao', ...MEASUREMENT_COLUMNS].join(','));
+    expect(header).toBe(
+      'sessao,captura,desfecho,categoria,bandeira,tentativas,t_ciclo,t_total,t_ppse,t_aid,t_gpo,t_read'
+    );
+    expect(MEASUREMENT_COLUMNS).toHaveLength(11);
     expect(first).toBe('1,ct_1,sucesso,,visa,1,412.3,2345.7,20,15,90.1,35');
     expect(second).toBe('2,ct_1,falha,UNSUPPORTED_BRAND,,1,,2345.7,,,,');
+  });
+
+  it('desfechos saem no vocabulário do Apêndice B no CSV', () => {
+    const rows: CaptureResult[] = [
+      { ...success, meta: { ...meta, attempts: 2 } },
+      { status: 'cancelled', meta: bare },
+      { status: 'timeout', error: createError('TIMEOUT'), meta: bare },
+    ];
+    const lines = measurementsToCsv(rows.map(toMeasurementRow)).split('\n');
+    expect(lines.slice(1).map((l) => l.split(',')[1])).toEqual([
+      'recuperado',
+      'cancelado',
+      'expirado',
+    ]);
   });
 
   it('escapa vírgula e aspas', () => {

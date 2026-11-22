@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { SafeAreaView, StatusBar, StyleSheet } from 'react-native';
+import { StatusBar, StyleSheet, View } from 'react-native';
 import { CashTapProvider, type CaptureResult } from 'react-native-cashtap';
 import { Backdrop } from './components/ui';
 import { ChargeScreen } from './screens/ChargeScreen';
 import { DiagnosticsScreen } from './screens/DiagnosticsScreen';
 import { ResultScreen } from './screens/ResultScreen';
-import { TrialsScreen } from './screens/TrialsScreen';
+import { TrialsScreen, type Trial } from './screens/TrialsScreen';
 
 type Route =
   | { name: 'charge'; amountCents?: number; retry?: boolean }
@@ -13,15 +13,25 @@ type Route =
   | { name: 'diagnostics' }
   | { name: 'trials' };
 
+/**
+ * Com edge-to-edge (padrão no RN 0.88) o app desenha sob as barras do sistema, e o
+ * SafeAreaView do core não faz nada no Android. Margens explícitas: status bar medida,
+ * barra de navegação de 3 botões (48 dp) reservada.
+ */
+const TOP_INSET = StatusBar.currentHeight ?? 24;
+const BOTTOM_INSET = 48;
+
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'charge' });
+  // Ensaios ficam aqui: voltar para a cobrança não apaga as leituras registradas.
+  const [trials, setTrials] = useState<Trial[]>([]);
   const home = () => setRoute({ name: 'charge' });
 
   return (
     <CashTapProvider>
       <StatusBar barStyle="light-content" />
       <Backdrop>
-        <SafeAreaView style={styles.root}>
+        <View style={styles.root}>
           {route.name === 'charge' && (
             <ChargeScreen
               key={route.amountCents ?? 0}
@@ -51,13 +61,15 @@ export default function App() {
           {route.name === 'diagnostics' && (
             <DiagnosticsScreen onBack={home} onNewCharge={home} />
           )}
-          {route.name === 'trials' && <TrialsScreen onBack={home} />}
-        </SafeAreaView>
+          {route.name === 'trials' && (
+            <TrialsScreen onBack={home} trials={trials} setTrials={setTrials} />
+          )}
+        </View>
       </Backdrop>
     </CashTapProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
+  root: { flex: 1, paddingTop: TOP_INSET, paddingBottom: BOTTOM_INSET },
 });
