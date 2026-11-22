@@ -43,3 +43,28 @@ dependencies {
 
   testImplementation "junit:junit:4.13.2"
 }
+
+// testing.md: o núcleo puro emv/ precisa de ≥ 90% de linhas cobertas pelos testes JVM.
+// Lê o relatório JaCoCo que o AGP gera (enableUnitTestCoverage) e falha abaixo do mínimo.
+def emvCoverageReport = layout.buildDirectory.file("reports/coverage/test/debug/report.xml")
+tasks.register("verifyEmvCoverage") {
+  group = "verification"
+  description = "Falha se a cobertura de linhas de com.cashtap.emv ficar abaixo de 90%."
+  dependsOn "createDebugUnitTestCoverageReport"
+  inputs.file(emvCoverageReport)
+  doLast {
+    def parser = new groovy.xml.XmlSlurper(false, false)
+    parser.setFeature("http://apache.org/xml/features/disallow-doctype-decl", false)
+    parser.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+    def report = parser.parse(emvCoverageReport.get().asFile)
+    def emv = report.package.find { it.@name.text() == "com/cashtap/emv" }
+    def line = emv.counter.find { it.@type.text() == "LINE" }
+    def covered = line.@covered.text().toInteger()
+    def missed = line.@missed.text().toInteger()
+    def ratio = covered / (covered + missed)
+    logger.lifecycle(String.format("emv/: %.1f%% de linhas cobertas (%d de %d)", ratio * 100, covered, covered + missed))
+    if (ratio < 0.90) {
+      throw new GradleException("Cobertura de linhas de emv/ abaixo de 90%")
+    }
+  }
+}
