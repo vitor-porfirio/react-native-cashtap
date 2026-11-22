@@ -386,6 +386,27 @@ stateDiagram-v2
 
 ---
 
+## D021 — Medição, CI e protocolo dos ensaios  (2026-11-22 · F8 · #29–#32)
+
+**Contexto:** a F8 fecha a validação: núcleo testado no CI (#29), documentação de integração (#30), tempos por etapa exportáveis (#31) e o ensaio de 60 leituras com dados brutos versionados (#32). A #31 pede o tempo de **detecção**, que ainda não existia.
+
+**Decisão:**
+- `CaptureMeta.detectionMs` (opcional, só em sucesso): do `capture()` à entrada em `READING` da leitura que deu certo — inclui a espera do operador e as retentativas. Exportado como `t_deteccao`. Junto com `t_ciclo`, `t_ppse`…`t_read` e `t_total`, cobre todas as etapas pedidas.
+- CI ganha o job `test-android` com `:react-native-cashtap:testDebugUnitTest` (JDK 17, JVM, sem device), ao lado do Jest. O núcleo EMV e a máquina de estados rodam em todo PR.
+- Protocolo dos ensaios em `docs/ensaios/protocolo.md`, escrito antes da coleta: 3 sessões × (10 Visa + 10 Mastercard), condições controladas, classificação de desfecho e métricas. A taxa de sucesso exclui canceladas e expiradas do denominador (são erro de procedimento, não de leitura), mas elas continuam registradas. `t_deteccao` e `t_total` dependem do operador e não entram na comparação entre bandeiras.
+- `scripts/ensaios-resumo.mjs` (Node puro, sem dependência) gera as tabelas do capítulo de resultados a partir dos CSVs versionados em `docs/ensaios/dados/`.
+- A documentação da API fica no README (referência para quem integra) e no Apêndice A (texto do TCC); não há um `docs/api.md` separado, para não manter três cópias.
+
+**Alternativas:**
+- *Medir a detecção no nativo (`detectedAt` do evento)* — descartada: relógio do nativo (`elapsedRealtime`) e do JS são diferentes; o runner já tem o instante da transição com o mesmo relógio das demais medidas.
+- *Planilha manual para os ensaios* — descartada: a linha sai pronta do SDK; o script evita erro de transcrição e torna o resultado reproduzível.
+
+**Consequências:** o ensaio pode começar sem nenhuma mudança de código; qualquer pessoa reproduz as tabelas a partir dos CSVs do repositório.
+
+**Evidência:** `src/core/__tests__/controller.test.ts` (detecção no caminho feliz e na releitura da tag pendente; ausente em falha), `src/core/__tests__/measurements.test.ts` (coluna `t_deteccao`), `.github/workflows/ci.yml` (job `test-android`).
+
+---
+
 # Divergências spec EMV × cartão real
 
 | Data | Cartão | Esperado pela spec | Observado | Hex |

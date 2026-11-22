@@ -102,3 +102,16 @@ Issues: #20 (5.1, 5.2, 5.4), #21 (5.3, 5.8) e RN-02/D018 (5.5–5.7).
 | 6.18 | Contraste: trocar o tema do exemplo para claro / "Feira Verde" (se exposto) ou validar pelos prints | Texto secundário e bordas visíveis sobre o fundo claro | |
 
 Issues: #24 (6.3, 6.16), #25 (6.3–6.5, 6.7, 6.12–6.15), #26 (temas: ver testes; visual em 6.3, 6.18), #27 (6.1–6.7, 6.10), #28 (6.9).
+
+## F8 — Ensaios de validação (#32)
+
+Siga o [protocolo dos ensaios](ensaios/protocolo.md): 60 leituras, 30 Visa e 30 Mastercard, em 3 sessões de 20.
+
+| # | Passo | Esperado | OK? |
+|---|---|---|---|
+| 8.1 | Instalar o app em release a partir da `main` e anotar o commit | `yarn example android --mode release --active-arch-only` conclui; app abre na cobrança | |
+| 8.2 | Sessão 1: 10 Visa + 10 Mastercard; exportar o CSV | `docs/ensaios/dados/sessao-1-<data>.csv` com 20 linhas e colunas `t_deteccao`…`t_read` | |
+| 8.3 | Sessões 2 e 3 em dias diferentes | Mais dois CSVs com 20 linhas cada | |
+| 8.4 | `node scripts/ensaios-resumo.mjs docs/ensaios/dados/*.csv` | Tabelas por bandeira e total, prontas para o capítulo de resultados | |
+| 8.5 | Conferir os CSVs | Nenhum número de cartão em nenhuma coluna | |
+| 8.6 | Commitar os CSVs e a tabela de [dados/README.md](ensaios/dados/README.md) | Dados brutos versionados (critério da #32) | |
