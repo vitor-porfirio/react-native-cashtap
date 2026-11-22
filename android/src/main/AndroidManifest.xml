@@ -3,6 +3,9 @@
   <!-- Permissão "normal": concedida na instalação, sem diálogo. Fundida no manifesto do app. -->
   <uses-permission android:name="android.permission.NFC" />
 
+  <!-- Retorno tátil do modal (E6-H2: detecção, falha, sucesso, erro). Permissão normal. -->
+  <uses-permission android:name="android.permission.VIBRATE" />
+
   <!--
     Não obrigatória: o SDK não esconde o app do integrador na Play Store para quem
     não tem NFC. A ausência é tratada em tempo de execução (RN-01 → NFC_UNSUPPORTED).
