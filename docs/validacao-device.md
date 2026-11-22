@@ -56,3 +56,22 @@ O fluxo completo de leitura só fica acessível pela UI do SDK a partir da F6. E
 Issues: #8 (2.1, 2.7, 2.10–2.12), #9 (2.1, 2.6, 2.8, 2.13), #11 e #13 (2.3, 2.4, 2.14), #14 e #15 (2.3), #16 e #17 (2.1, 2.2, 2.9), #23 (2.5). #6, #10 e #12 são cobertas por testes unitários.
 
 Se o GPO de algum cartão responder `6985` ou `6984`: exporte o diagnóstico e mande o comando GPO e a resposta do SELECT AID (já mascarados) — o ajuste é nos valores de terminal da D013.
+
+---
+
+## F5 — Fluxo: timeout, retentativa e cancelamento (#20, #21)
+
+Execute junto com a F6/F7 (pela tela de cobrança do example). Deixe o `adb logcat -s CashTap ReactNativeJS` aberto.
+
+| # | Passo | Esperado | OK? |
+|---|---|---|---|
+| 5.1 | Cobrar e não aproximar nada por 30 s | Tela "Tempo esgotado"; resultado `TIMEOUT` no app | |
+| 5.2 | Logo depois de 5.1, aproximar o cartão | **Nada acontece**: nenhuma leitura, nenhum som, nada no logcat (reader mode desligado) | |
+| 5.3 | Cobrar, aproximar e tocar "Cancelar" enquanto lê | Botão vira "Cancelando…"; resultado `cancelado`; a próxima cobrança funciona normalmente (canal IsoDep fechado) | |
+| 5.4 | Cobrar e afastar o cartão no meio da leitura 3 vezes seguidas (padrão: 2 retentativas) | Duas telas "Não foi possível ler" com "Tentativa 2 de 3" e "3 de 3"; na terceira falha, erro `READ_FAILED_MAX_RETRIES` | |
+| 5.5 | Cobrar, aguardar a tela "Aproxime o cartão" e desligar o NFC pelo painel rápido | Muda na hora para "NFC desligado" (sem esperar o timeout) | |
+| 5.6 | Na tela de 5.5, ligar o NFC pelo painel rápido | Volta sozinho para "Aproxime o cartão" (reverificação) e a leitura funciona | |
+| 5.7 | Cobrar, aproximar e desligar o NFC durante a leitura | Termina em "NFC desligado" (não em tempo esgotado) | |
+| 5.8 | Cobrar com o NFC desligado e tocar "Cancelar" na tela de NFC desligado | Resultado `NFC_DISABLED` no app; modal fecha | |
+
+Issues: #20 (5.1, 5.2, 5.4), #21 (5.3, 5.8) e RN-02/D018 (5.5–5.7).
