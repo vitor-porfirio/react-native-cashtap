@@ -449,10 +449,14 @@ describe('retentativa (E5-H3)', () => {
     await failOnce();
     await advance(DEFAULT_DISPLAY_DURATIONS.recovery);
     await advance(DEFAULT_DISPLAY_DURATIONS.failure);
-    await expect(promise).resolves.toMatchObject({
+    const result = await promise;
+    expect(result).toMatchObject({
       error: { code: 'READ_FAILED_MAX_RETRIES' },
       meta: { attempts: 1 },
     });
+    // E8-H2/#31: houve leitura, mas sem sucesso — métricas de leitura não existem
+    expect(result.meta.detectionMs).toBeUndefined();
+    expect(result.meta.readDurationMs).toBeUndefined();
   });
 
   it('D017: cartão que sai e volta durante a leitura é lido de novo sem nova aproximação', async () => {
@@ -899,8 +903,58 @@ describe('robustez do runner (D018)', () => {
     await advance(DEFAULT_DISPLAY_DURATIONS.success);
     const result = await promise;
     expect(result.meta.readDurationMs).toBe(200);
-    // t_deteccao: até a entrada em READING da leitura que deu certo (releitura da tag pendente)
-    expect(result.meta.detectionMs).toBe(500);
+    // E8-H2/#31: a releitura usa a tag pendente, detectada em +100 ms
+    expect(result.meta.detectionMs).toBe(100);
+  });
+
+  it('E8-H2/#31: t_deteccao é o instante da aproximação que deu certo, após retentativa', async () => {
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    clock += 50;
+    native.tap();
+    await flush();
+    clock += 300;
+    native.finishRead({ ok: false, code: 'CARD_REMOVED', detail: '' });
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.recovery);
+    clock += 1_000;
+    const tappedAt = clock;
+    native.tap();
+    await flush();
+    clock += 250;
+    native.finishRead({ ok: true, card });
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.success);
+    const result = await promise;
+    expect(result.meta.attempts).toBe(2);
+    expect(result.meta.detectionMs).toBe(tappedAt - 1_000);
+    expect(result.meta.readDurationMs).toBe(250);
+  });
+
+  it('E8-H2/#31: cartão aproximado durante a verificação conta da detecção, não do NFC pronto', async () => {
+    const gate: { open?: () => void } = {};
+    native.startReaderMode.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          gate.open = () => resolve({ ok: true });
+        })
+    );
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    clock += 30;
+    native.tap();
+    await flush();
+    clock += 50;
+    gate.open?.();
+    await flush();
+    expect(getActiveSession()?.state).toBe('READING');
+    clock += 200;
+    native.finishRead({ ok: true, card });
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.success);
+    const result = await promise;
+    expect(result.meta.detectionMs).toBe(30);
+    expect(result.meta.readDurationMs).toBe(200);
   });
 });
 

@@ -16,9 +16,9 @@ export type MeasurementRow = {
   errorCode: ErrorCode | '';
   brand: CardBrand | '';
   attempts: number;
-  /** Do `capture()` à detecção do cartão lido com sucesso (t_deteccao). */
+  /** Do `capture()` à detecção da aproximação cuja leitura teve sucesso (t_deteccao). */
   detectionMs: number | null;
-  /** Da detecção do cartão ao resultado da leitura (t_ciclo). */
+  /** Do início da leitura bem-sucedida ao resultado (t_ciclo). */
   readMs: number | null;
   /** Do `capture()` ao desfecho (t_total). */
   totalMs: number;
