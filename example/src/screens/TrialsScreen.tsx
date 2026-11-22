@@ -96,9 +96,13 @@ export function TrialsScreen({ onBack, trials, setTrials }: Props) {
     }
   };
 
+  // Um arquivo por sessão (protocolo dos ensaios): só as tentativas da sessão selecionada,
+  // mesmo que o app tenha ficado aberto desde a sessão anterior.
+  const sessionTrials = trials.filter((t) => t.sessao === session);
   const exportCsv = async () => {
     await Share.share({
-      message: measurementsToCsv(trials, ['n', 'sessao', 'cartao']),
+      title: `sessao-${session}.csv`,
+      message: measurementsToCsv(sessionTrials, ['n', 'sessao', 'cartao']),
     });
     setExported(true);
   };
@@ -116,7 +120,10 @@ export function TrialsScreen({ onBack, trials, setTrials }: Props) {
           <Segmented
             options={[1, 2, 3].map((n) => ({ value: n, label: `Sessão ${n}` }))}
             value={session}
-            onChange={setSession}
+            onChange={(next) => {
+              setSession(next);
+              setExported(false);
+            }}
           />
         </View>
         <View style={styles.group}>
@@ -218,9 +225,9 @@ export function TrialsScreen({ onBack, trials, setTrials }: Props) {
       <View style={styles.footer}>
         <View style={styles.flex}>
           <SecondaryButton
-            label={exported ? 'Exportado' : 'Exportar CSV'}
+            label={exported ? 'Exportado' : `Exportar sessão ${session}`}
             onPress={exportCsv}
-            disabled={trials.length === 0}
+            disabled={sessionTrials.length === 0}
             color={exported ? c.success : c.text}
           />
         </View>
