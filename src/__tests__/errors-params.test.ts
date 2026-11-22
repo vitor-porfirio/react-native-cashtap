@@ -122,6 +122,8 @@ describe('resolveParams', () => {
     [120_000, 120_000],
     [999_999, 120_000],
     [Number.NaN, DEFAULT_TIMEOUT_MS],
+    [Number.POSITIVE_INFINITY, 120_000],
+    [Number.NEGATIVE_INFINITY, 10_000],
   ])('RN-05: timeoutMs=%p vira %p', (timeoutMs, expected) => {
     const result = resolveParams({ amountCents: 1, timeoutMs });
     expect(result.ok && result.params.timeoutMs).toBe(expected);
@@ -133,6 +135,8 @@ describe('resolveParams', () => {
     [3.9, 3],
     [5, 5],
     [10, 5],
+    [Number.POSITIVE_INFINITY, 5],
+    [Number.NEGATIVE_INFINITY, 0],
   ])('RN-08: maxRetries=%p vira %p', (maxRetries, expected) => {
     const result = resolveParams({ amountCents: 1, maxRetries });
     expect(result.ok && result.params.maxRetries).toBe(expected);

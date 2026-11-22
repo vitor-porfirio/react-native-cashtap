@@ -20,7 +20,12 @@ import {
   subscribeActiveSession,
 } from '../controller';
 import { getLastDiagnostics } from '../diagnostics';
-import { DEFAULT_DISPLAY_DURATIONS, type NativePort } from '../session';
+import { resolveParams } from '../params';
+import {
+  CaptureSession,
+  DEFAULT_DISPLAY_DURATIONS,
+  type NativePort,
+} from '../session';
 import type { DiagnosticExchange } from '../../native';
 
 const card: NativeCardRead = {
@@ -365,17 +370,20 @@ describe('timeout (E5-H2)', () => {
     await promise;
   });
 
-  it('INV-5: timer não dispara depois que o cartão foi detectado', async () => {
+  it('INV-5: timer só existe em WAITING_CARD e nada fica armado depois de resolver (#20)', async () => {
     const promise = capture({ amountCents: 100 });
     await flush();
+    expect(jest.getTimerCount()).toBe(1); // timer de espera
     native.tap();
     await flush();
+    expect(jest.getTimerCount()).toBe(0); // timer de espera limpo em READING
     await advance(60_000);
     expect(getActiveSession()?.state).toBe('READING');
     native.finishRead({ ok: true, card });
     await flush();
     await advance(DEFAULT_DISPLAY_DURATIONS.success);
     await expect(promise).resolves.toMatchObject({ status: 'success' });
+    expect(jest.getTimerCount()).toBe(0); // nenhum recurso aberto após resolver
   });
 });
 
@@ -569,16 +577,69 @@ describe('eventos para a UI e para o integrador', () => {
     unsubscribe();
   });
 
-  it('RN-22: depois de resolver, nenhum dado do cartão fica na sessão', async () => {
-    const promise = capture({ amountCents: 100 });
+  it('RN-22: depois de resolver, a sessão não retém o cartão', async () => {
+    const resolved = resolveParams({ amountCents: 100 });
+    if (!resolved.ok) throw new Error('params');
+    const session = new CaptureSession(
+      'ct_test',
+      resolved.params,
+      {
+        native,
+        clock: { now: () => clock, epochMs: () => 0 },
+        timers: {
+          setTimeout: (cb, ms) => setTimeout(cb, ms),
+          clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+        },
+        display: DEFAULT_DISPLAY_DURATIONS,
+      },
+      () => {}
+    );
+    const promise = session.start();
     await flush();
     native.tap();
     await flush();
     native.finishRead({ ok: true, card });
     await flush();
+    expect(session.current.state).toBe('SUCCESS');
+    expect('card' in session.current).toBe(true);
     await advance(DEFAULT_DISPLAY_DURATIONS.success);
     await promise;
-    expect(JSON.stringify(getActiveSession())).not.toContain(card.pan);
+    expect(session.current.state).toBe('IDLE');
+    expect('card' in session.current).toBe(false);
+    expect(JSON.stringify(session.current)).not.toContain(card.pan);
+  });
+
+  it('SUCCESS fica visível pelo tempo de exibição antes de resolver (D018)', async () => {
+    const settled = jest.fn();
+    capture({ amountCents: 100 }).then(settled);
+    await flush();
+    native.tap();
+    await flush();
+    native.finishRead({ ok: true, card });
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.success - 1);
+    expect(getActiveSession()?.state).toBe('SUCCESS');
+    expect(settled).not.toHaveBeenCalled();
+    await advance(1);
+    expect(settled).toHaveBeenCalledTimes(1);
+  });
+
+  it('registerUiHost: desregistrar duas vezes não desconta outro Provider', async () => {
+    __setDepsForTests({ native }, { requireUiHost: true });
+    const first = registerUiHost();
+    const second = registerUiHost();
+    first();
+    first();
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    expect(getActiveSession()?.state).toBe('WAITING_CARD');
+    cancel();
+    await flush();
+    await promise;
+    second();
+    await expect(capture({ amountCents: 100 })).rejects.toThrow(
+      /CashTapProvider/
+    );
   });
 });
 
@@ -927,5 +988,69 @@ describe('projeção para a UI acompanha o contexto', () => {
     await expect(promise).resolves.toMatchObject({
       error: { code: 'NFC_DISABLED' },
     });
+  });
+});
+
+describe('ordem e descarte de eventos (D018)', () => {
+  it('reentrância: cancel() de um listener ao entrar em WAITING_CARD não inverte a ordem para os demais', async () => {
+    const first: string[] = [];
+    const second: string[] = [];
+    onStateChange((e) => {
+      first.push(e.state);
+      if (e.state === 'WAITING_CARD') cancel();
+    });
+    onStateChange((e) => second.push(e.state));
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    await promise;
+    expect(second).toEqual(first);
+    expect(second.indexOf('WAITING_CARD')).toBeLessThan(
+      second.indexOf('CANCELLED')
+    );
+  });
+
+  it('evento agendado para o estado anterior não dispara depois de uma aproximação real', async () => {
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    native.tap();
+    await flush();
+    native.tap(); // tag pendente durante a leitura
+    await flush();
+    native.finishRead({ ok: false, code: 'CARD_REMOVED', detail: '' });
+    await Promise.resolve();
+    await Promise.resolve();
+    // RECOVERABLE_FAILURE agendou uma releitura; uma aproximação real chega antes
+    native.tap();
+    await flush();
+    expect(native.readCard).toHaveBeenCalledTimes(2);
+    expect(getActiveSession()?.state).toBe('READING');
+    // a releitura agendada foi descartada: falhar agora volta a esperar, sem 3ª leitura imediata
+    native.finishRead({ ok: false, code: 'CARD_REMOVED', detail: '' });
+    await flush();
+    expect(native.readCard).toHaveBeenCalledTimes(2);
+    expect(getActiveSession()?.state).toBe('RECOVERABLE_FAILURE');
+    cancel();
+    await flush();
+    await promise;
+  });
+
+  it('INV-3: falha ao montar o resultado ainda resolve a Promise (UNKNOWN)', async () => {
+    const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const promise = capture({ amountCents: 100 });
+    await flush();
+    native.tap();
+    await flush();
+    const broken = {
+      ...card,
+      stepDurationsMs: undefined,
+    } as unknown as NativeCardRead;
+    native.finishRead({ ok: true, card: broken });
+    await flush();
+    await advance(DEFAULT_DISPLAY_DURATIONS.success);
+    await expect(promise).resolves.toMatchObject({
+      status: 'error',
+      error: { code: 'UNKNOWN' },
+    });
+    error.mockRestore();
   });
 });
