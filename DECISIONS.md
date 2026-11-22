@@ -342,9 +342,14 @@ stateDiagram-v2
 **Decisão:**
 - **`<CashTapProvider>`** hospeda o modal; `capture()` sem ele rejeita (D018). O integrador escreve o Provider e uma chamada — o app de exemplo inteiro usa 3 linhas de SDK (teste E7-H2 automatizado).
 - **Zero dependência nativa na UI:** sem BlurView, gradiente nem SVG. Vidro vira superfície translúcida (folha quase opaca, para manter contraste sem blur), gradientes viram cor sólida e ícones são desenhados com `View`. Animações com `Animated` (driver nativo); com "Remover animações" ligado, loops viram estado estático.
-- **Tema:** `CashTapAppearance` com `mode` (`dark`/`light`), cores, fonte, raio e textos — por Provider e por captura. Se o integrador troca só a cor base (`primary`, `success`, `error`), as variações (`primaryStrong`, `primarySoft`, tons suaves) são derivadas, como o `derived` dos tokens. A fonte padrão é a do sistema: Sora/JetBrains Mono não são embutidas no pacote (o integrador pode passar `fontFamily`).
-- **Progresso por etapa:** a leitura sempre emite as trocas já mascaradas (`readCard(..., true)`); o runner conta as etapas com SW 9000 e a UI mostra PPSE/AID/GPO/READ. O registro de diagnóstico continua condicionado a `diagnostics: true`.
-- **Hápticos** do design via `Vibration` (permissão `VIBRATE`, normal, volta ao manifesto da lib): detecção 15 ms, falha recuperável 30 ms, sucesso `[0,40,60,40]`, erro/tempo esgotado `[0,80,40,80]`.
+- **Tema:** `CashTapAppearance` com `mode` (`dark`/`light`), cores, fonte, raio, textos e `haptics` — por Provider e por captura. Se o integrador troca só a cor base, as variações não informadas são derivadas como no `derived` dos tokens: de `primary` saem `primaryStrong`/`primarySoft`; de `text`/`background` saem `textMuted` (mistura de 30%) e `surface`/`surfaceStrong`/`border`/`line` (alfa sobre o texto), para não sobrar texto secundário claro sobre fundo branco; de `success`/`error` saem os tons suaves. Valores de tipo errado (integrador JS sem tipos) são ignorados, nunca derrubam o modal. Paletas e textos padrão são congelados. A fonte padrão é a do sistema: Sora/JetBrains Mono não são embutidas no pacote (o integrador pode passar `fontFamily`). Os tipos de aparência moram em `src/types.ts`: o núcleo não importa nada de `src/ui`.
+- **Progresso por etapa:** o nativo sempre emite `onDiagnostic` a cada comando, mas com `diagnostics: false` `command` e `response` chegam vazios — o progresso só precisa de etapa e SW (minimização, LGPD art. 6º, III). O runner conta etapas distintas com SW 9000, só em READING, e zera a cada nova aproximação. A UI mostra rótulos neutros e trocáveis (`stepConnect`…`stepRecords`: "Conexão", "Aplicação", "Autorização", "Dados"), não o jargão PPSE/AID/GPO/READ, com `accessibilityRole="progressbar"`. O registro de diagnóstico continua condicionado a `diagnostics: true`.
+- **Hápticos** do design via `Vibration` (permissão `VIBRATE`, normal, volta ao manifesto da lib): detecção 15 ms, falha recuperável 30 ms, sucesso `[0,40,60,40]`, erro/tempo esgotado `[0,80,40,80]`. `haptics: false` desliga.
+- **RN-01 sem piscar:** a primeira tela "Verificando…" de cada captura só aparece se a verificação passar de 250 ms (`CHECKING_GRACE_MS`). Num aparelho sem NFC a resposta chega antes e a folha nunca é exibida. Na reverificação pedida pelo operador (NFC desligado → "Verificar novamente") o modal já está aberto e continua aberto (`ActiveSession.nfcChecked`).
+- **Acessibilidade:** cada troca de estado é anunciada com `AccessibilityInfo.announceForAccessibility` (views recém-montadas não são lidas de forma confiável por live region no Android). "Remover animações" é consultado uma vez, no host do modal, e distribuído por contexto.
+- **Edge-to-edge:** no RN 0.88 o `Modal` desenha sob a barra de navegação. Sem dependência de insets, a folha reserva 48 dp (altura da barra de 3 botões) abaixo das ações; o app de exemplo reserva a status bar medida e os mesmos 48 dp. Com navegação por gestos sobra uma margem um pouco maior — aceitável frente a botões inalcançáveis.
+- **Provider:** registra o host em `useLayoutEffect`, que roda antes dos efeitos passivos dos filhos: uma tela que chama `capture()` ao montar funciona. Com dois Providers montados, só o primeiro desenha o modal (e há aviso em desenvolvimento).
+- **Moeda na tela:** tabela ISO 4217 com o expoente de cada moeda (CLP sem centavos). Moeda fora da tabela mostra o código numérico (`826 5,00`), nunca "R$".
 - **Painel de diagnóstico** (`<CashTapDiagnostics>`) fica no SDK, não no app: assim o example mostra comandos e etapas sem conter nenhum termo do protocolo (E7-H2).
 
 **Divergências em relação ao design (intencionais):**
@@ -355,6 +360,29 @@ stateDiagram-v2
 - *Copiar JSON* virou "Compartilhar": o core do RN não tem mais Clipboard e o SDK não adiciona dependência.
 
 **Consequências:** visual fiel ao design sem custo de instalação para o integrador; quem quiser blur ou a fonte do design pode adicioná-los no próprio app.
+
+**Evidência:** `src/ui/__tests__/CashTapProvider.test.tsx` (uma view por estado, RN-01 sem exibir a folha, "Cancelando…" desabilitado, estilos do tema nos elementos, todos os textos de `CashTapTexts` na tela, rastro idêntico com e sem aparência em quatro roteiros, anúncios, Provider no mount), `src/core/__tests__/controller.test.ts` (progresso por etapa), `src/ui/__tests__/theme-format.test.ts` (derivação, sanitização, moeda).
+
+---
+
+## D020 — Superfície pública: entrada principal e `react-native-cashtap/dev`  (2026-11-21 · F6/F7 · #24, #28)
+
+**Contexto:** com a interface, o entry principal passou a exportar também o painel de diagnóstico, o registro da última captura, as medições dos ensaios e as paletas do tema. Cada export é uma promessa pública (D010); o relatório expunha o tipo cru da ponte nativa (`DiagnosticExchange`), as medições usavam identificadores em português (`'sucesso'`, `t_ciclo`), contra a D006, e as paletas eram objetos mutáveis compartilhados. Além disso, o Metro não faz tree-shaking: ferramenta de desenvolvimento no entry principal vai para o bundle de produção.
+
+**Decisão:**
+- `react-native-cashtap` exporta só o necessário para integrar: `capture`, `cancel`, `onStateChange`, `getNfcStatus`, `onNfcStatusChange`, `openNfcSettings`, `CashTapProvider` e os tipos (`CaptureParams`, `CaptureResult`, `CardData`, `CaptureMeta`, `StepTiming`, `CaptureState`, `CaptureStateEvent`, `CardBrand`, `EmvStep`, `CashTapError`, `ErrorCode`, `NfcStatus`, `Unsubscribe`, `CashTapProviderProps`, `CashTapAppearance`, `CashTapColors`, `CashTapTexts`). As paletas e os textos padrão deixam de ser exportados (estão documentados; `mode` escolhe a base).
+- `react-native-cashtap/dev` (campo `exports` do `package.json`) reúne o que é de desenvolvimento e de ensaio: `CashTapDiagnostics`, `getLastDiagnostics`, `onDiagnosticsChange`, `diagnosticsToText`, `toMeasurementRow`, `measurementsToCsv`, `MEASUREMENT_COLUMNS` e seus tipos.
+- O relatório usa um tipo público próprio (`DiagnosticsExchange`), copiado campo a campo: mudar o contrato do Turbo Module não quebra o integrador.
+- Medições em inglês (`outcome: 'success' | 'recovered' | 'failure' | 'cancelled' | 'timeout'`, `readMs`, `totalMs`, `ppseMs`…); o CSV mantém os rótulos do Apêndice B (`desfecho`, `t_ciclo`, `t_total`, `sucesso`, `recuperado`…).
+- Um teste fixa o conjunto de exports das duas entradas.
+
+**Alternativas:**
+- *Manter tudo no entry principal* — descartada: amplia a promessa pública e leva ferramenta de desenvolvimento para produção.
+- *Pacote separado `react-native-cashtap-dev`* — descartada: dois pacotes para versionar e publicar por causa de cinco funções.
+
+**Consequências:** quem integra vê só a API de captura; quem faz ensaios importa `react-native-cashtap/dev`. O integrador precisa de bundler com suporte a `exports` (Metro faz isso por padrão desde o RN 0.79).
+
+**Evidência:** `src/__tests__/public-api.test.ts`; `example/src/screens/{DiagnosticsScreen,TrialsScreen}.tsx` importam de `react-native-cashtap/dev` e passam na prova de opacidade.
 
 ---
 

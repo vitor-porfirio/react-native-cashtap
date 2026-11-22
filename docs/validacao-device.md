@@ -85,13 +85,20 @@ Issues: #20 (5.1, 5.2, 5.4), #21 (5.3, 5.8) e RN-02/D018 (5.5–5.7).
 | 6.1 | Abrir o app | Tela de cobrança escura com chip "NFC pronto" (ou desligado/sem NFC, conforme o aparelho) | |
 | 6.2 | Digitar 12890 no teclado, testar "00" e o apagar; segurar o apagar | R$ 128,90; "00" multiplica por 100; segurar zera | |
 | 6.3 | Tocar "Cobrar R$ 128,90" | Modal desliza de baixo; valor, "Leitura segura", celular com ondas e cartão animado | |
-| 6.4 | Aproximar o cartão | Vibração curta; "Lendo cartão… não afaste"; barra avança por PPSE → AID → GPO → READ | |
+| 6.4 | Aproximar o cartão | Vibração curta; "Lendo cartão… não afaste"; barra avança por Conexão → Aplicação → Autorização → Dados. Com cartão cujo PPSE responde 6A82, a barra começa em Aplicação (3 de 4 etapas) | |
 | 6.5 | Concluir a leitura | Check verde com vibração dupla; cartão mascarado e validade; modal fecha sozinho em ~1,5 s | |
 | 6.6 | Tela de resultado | Cartão ilustrado com número mascarado, duração, tentativas; "JSON para o backend" abre e compartilha (sem PAN completo) | |
 | 6.7 | Cobrar com um cartão não aceito (crachá/transporte) | Tela de erro com código; no app, "Tentar novamente" cobra de novo o mesmo valor | |
 | 6.8 | Ligar "Remover animações" (Acessibilidade) e cobrar | Telas estáticas, sem loops | |
-| 6.9 | Abrir "Diagnóstico" após uma leitura | Criptograma retornado (sim/não), tempo total, barras por etapa, linha do tempo e log mascarado; "Exportar" compartilha o texto | |
-| 6.10 | Abrir "Ensaios", escolher sessão/bandeira e registrar 2 leituras | Contador x/30, estatísticas, lista; "Exportar CSV" gera colunas do Apêndice B | |
+| 6.9 | Abrir "Diagnóstico" após uma leitura | Criptograma retornado (sim/não), tempo total e, abaixo, "Leitura do cartão" (t_ciclo); barras por etapa, linha do tempo e log mascarado; "Exportar" compartilha o texto | |
+| 6.10 | Abrir "Ensaios", escolher sessão/bandeira e registrar 2 leituras; voltar à cobrança e reabrir "Ensaios" | Contador x/30, estatísticas, lista; as leituras continuam lá depois de voltar; "Exportar CSV" gera colunas do Apêndice B (`desfecho`, `t_ciclo`, `t_total`…) | |
 | 6.11 | Tirar print das telas de 6.3–6.6 e 6.9 | Material da Figura 6 do TCC (nenhum número completo aparece) | |
+| 6.12 | Navegação por 3 botões (Configurações › Sistema › Gestos) em Android 15: cobrar e olhar o modal e a tela de cobrança | "Cancelar"/"Fechar" e "Cobrar" inteiros acima da barra de navegação; cabeçalho abaixo da status bar | |
+| 6.13 | Com o modal aberto, tocar "Voltar" do Android em Aguardando, Lendo e NFC desligado | Aguardando/NFC desligado: cancela e fecha. Lendo: passa a "Cancelando…" e fecha ao fim do comando | |
+| 6.14 | Ligar o TalkBack e cobrar | Cada troca de estado é falada ("Aproxime o cartão", "Lendo cartão…", "Cartão lido"); foco fica no modal; a barra é lida como progresso | |
+| 6.15 | Desligar o NFC e cobrar; depois tocar "Verificar novamente" com o NFC ainda desligado | O modal abre direto em "NFC desligado" sem piscar "Verificando…"; na reverificação o modal continua aberto | |
+| 6.16 | (Se houver aparelho sem NFC) cobrar | Nenhuma folha aparece, nem por um instante; o app mostra "Aparelho sem NFC" sem "Tentar novamente" | |
+| 6.17 | Tamanho da fonte do sistema no máximo (200%) | Valor e botões legíveis, sem texto cortado nas ações | |
+| 6.18 | Contraste: trocar o tema do exemplo para claro / "Feira Verde" (se exposto) ou validar pelos prints | Texto secundário e bordas visíveis sobre o fundo claro | |
 
-Issues: #24 (6.3), #25 (6.3–6.5, 6.7), #26 (temas: ver testes; visual em 6.3), #27 (6.1–6.7), #28 (6.9).
+Issues: #24 (6.3, 6.16), #25 (6.3–6.5, 6.7, 6.12–6.15), #26 (temas: ver testes; visual em 6.3, 6.18), #27 (6.1–6.7, 6.10), #28 (6.9).
